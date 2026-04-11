@@ -1,84 +1,103 @@
-"""Promoter search and selection service. Queries EPD and JASPAR."""
+"""Promoter search and selection service.
+
+Loads promoter data from CSV, supplemented by EPD API queries.
+"""
+
+import csv
+from pathlib import Path
 
 from fastapi import HTTPException
 
 from app.clients.epd_client import epd_client
 from app.schemas.regulatory import PromoterInfo, PromoterSearchResult
 
-# Common synthetic promoters (not from EPD)
-SYNTHETIC_PROMOTERS = {
-    "mammalian": [
-        PromoterInfo(
-            id="syn_cmv", name="CMV", organism="mammalian", sequence="", length=0,
-            description="Cytomegalovirus immediate-early promoter", strength="strong",
-        ),
-        PromoterInfo(
-            id="syn_ef1a", name="EF1a", organism="mammalian", sequence="", length=0,
-            description="Elongation factor 1-alpha promoter", strength="strong",
-        ),
-        PromoterInfo(
-            id="syn_cag", name="CAG", organism="mammalian", sequence="", length=0,
-            description="CMV early enhancer/chicken beta-actin promoter", strength="strong",
-        ),
-        PromoterInfo(
-            id="syn_pgk", name="PGK", organism="mammalian", sequence="", length=0,
-            description="Phosphoglycerate kinase promoter", strength="moderate",
-        ),
-    ],
-    "yeast": [
-        PromoterInfo(
-            id="syn_gal1", name="GAL1", organism="yeast", sequence="", length=0,
-            description="Galactose-inducible promoter", strength="strong",
-        ),
-        PromoterInfo(
-            id="syn_tef1", name="TEF1", organism="yeast", sequence="", length=0,
-            description="Translation elongation factor promoter", strength="strong",
-        ),
-    ],
-    "plant": [
-        PromoterInfo(
-            id="syn_camv35s", name="CaMV 35S", organism="plant", sequence="", length=0,
-            description="Cauliflower mosaic virus 35S promoter", strength="strong",
-        ),
-    ],
-    "bacterial": [
-        PromoterInfo(
-            id="syn_t7", name="T7", organism="bacterial", sequence="TAATACGACTCACTATAGGG", length=19,
-            description="T7 RNA polymerase promoter", strength="strong",
-        ),
-        PromoterInfo(
-            id="syn_tac", name="tac", organism="bacterial", sequence="", length=0,
-            description="Hybrid trp/lac promoter (IPTG-inducible)", strength="strong",
-        ),
-        PromoterInfo(
-            id="syn_lac", name="lac", organism="bacterial", sequence="", length=0,
-            description="Lactose operon promoter (IPTG-inducible)", strength="moderate",
-        ),
-    ],
-    "ecoli": [
-        PromoterInfo(
-            id="syn_t7", name="T7", organism="bacterial", sequence="TAATACGACTCACTATAGGG", length=19,
-            description="T7 RNA polymerase promoter", strength="strong",
-        ),
-        PromoterInfo(
-            id="syn_tac", name="tac", organism="bacterial", sequence="", length=0,
-            description="Hybrid trp/lac promoter (IPTG-inducible)", strength="strong",
-        ),
-        PromoterInfo(
-            id="syn_lac", name="lac", organism="bacterial", sequence="", length=0,
-            description="Lactose operon promoter (IPTG-inducible)", strength="moderate",
-        ),
-    ],
-}
+DATA_DIR = Path(__file__).resolve().parent.parent.parent / "data"
+
+# Loaded once at first access
+_PROMOTER_DATA: list[PromoterInfo] = []
+
+
+def _load_promoters() -> list[PromoterInfo]:
+    global _PROMOTER_DATA
+    if _PROMOTER_DATA:
+        return _PROMOTER_DATA
+
+    csv_path = DATA_DIR / "promoters.csv"
+    with open(csv_path, newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            name = (row.get("Name") or "").strip()
+            organism = (row.get("Organism") or "").strip()
+            if not name or not organism:
+                continue
+            sequence = (row.get("Sequence") or "").strip()
+            ptype = (row.get("Type") or "").strip()
+            inducer = (row.get("Inducer_Tissue_Trigger") or "").strip()
+            score = (row.get("Expression_Score") or "").strip()
+            usable_in = (row.get("Usable_In") or "").strip()
+
+            # Build description from type + inducer/trigger info
+            desc_parts = [ptype] if ptype else []
+            if inducer:
+                desc_parts.append(inducer)
+            if usable_in:
+                desc_parts.append(f"Usable in: {usable_in}")
+            description = ". ".join(desc_parts) if desc_parts else None
+
+            # Map expression score to strength
+            strength = None
+            if score:
+                try:
+                    s = int(score)
+                    if s >= 80:
+                        strength = "strong"
+                    elif s >= 40:
+                        strength = "moderate"
+                    else:
+                        strength = "weak"
+                except ValueError:
+                    pass
+
+            # Generate a stable ID from the name
+            promoter_id = "csv_" + name.lower().replace(" ", "_").replace("(", "").replace(")", "").replace("/", "_")
+
+            _PROMOTER_DATA.append(PromoterInfo(
+                id=promoter_id,
+                name=name,
+                organism=organism,
+                sequence=sequence,
+                length=len(sequence),
+                description=description,
+                strength=strength,
+            ))
+
+    return _PROMOTER_DATA
+
+
+def _match_organism(promoter: PromoterInfo, query: str) -> bool:
+    """Check if a promoter matches an organism search query."""
+    q = query.lower()
+    fields = [
+        promoter.organism.lower(),
+        promoter.name.lower(),
+        (promoter.description or "").lower(),
+    ]
+    return any(q in f for f in fields)
 
 
 async def search_promoters(
     organism: str, gene: str | None = None, limit: int = 20
 ) -> PromoterSearchResult:
-    """Search EPD for promoters, supplemented with synthetic promoter catalog."""
+    """Search for promoters by organism, supplemented with EPD results."""
     promoters: list[PromoterInfo] = []
 
-    # Try EPD first
+    # Search CSV data first
+    all_promoters = _load_promoters()
+    for p in all_promoters:
+        if _match_organism(p, organism):
+            promoters.append(p)
+
+    # Supplement with EPD API
     try:
         epd_data = await epd_client.search_promoters(organism, gene=gene, limit=limit)
         for entry in epd_data.get("results", []):
@@ -96,21 +115,16 @@ async def search_promoters(
     except Exception:
         pass
 
-    # Supplement with synthetic promoters
-    for category, synth_list in SYNTHETIC_PROMOTERS.items():
-        if category in organism.lower():
-            promoters.extend(synth_list)
-
     return PromoterSearchResult(promoters=promoters[:limit], total=len(promoters))
 
 
 async def get_promoter(promoter_id: str) -> PromoterInfo:
     """Fetch a specific promoter by ID."""
-    # Check synthetic promoters first
-    for _category, synth_list in SYNTHETIC_PROMOTERS.items():
-        for promoter in synth_list:
-            if promoter.id == promoter_id:
-                return promoter
+    # Check CSV promoters first
+    all_promoters = _load_promoters()
+    for p in all_promoters:
+        if p.id == promoter_id:
+            return p
 
     # Try EPD
     try:

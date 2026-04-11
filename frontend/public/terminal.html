@@ -34,7 +34,7 @@
       padding: 8px 16px 16px;
       gap: 8px;
     }
-    #input-area .prompt { color: #3fb950; font-weight: bold; white-space: nowrap; }
+    #input-area .prompt { color: #3fb950; font-weight: bold; white-space: nowrap; max-width: 40%; overflow: hidden; text-overflow: ellipsis; }
     #input-area input {
       flex: 1;
       background: transparent;
@@ -45,9 +45,31 @@
       font-size: inherit;
       caret-color: #3fb950;
     }
+    #status-bar {
+      display: flex;
+      justify-content: space-between;
+      padding: 4px 16px;
+      background: #161b22;
+      border-bottom: 1px solid #30363d;
+      font-size: 12px;
+      color: #8b949e;
+      flex-shrink: 0;
+    }
+    #status-bar span {
+      white-space: nowrap;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    #status-bar .active { color: #3fb950; }
   </style>
 </head>
 <body>
+  <div id="status-bar">
+    <span id="sb-project">Project: none</span>
+    <span id="sb-construct">Construct: none</span>
+    <span id="sb-workspace">Workspace: 0 items</span>
+  </div>
   <div id="terminal"></div>
   <div id="input-area">
     <span class="prompt">genbit&gt;</span>
@@ -70,6 +92,9 @@
       historyIndex: -1,
       workspace: {},
       sessionId: getSessionId(),
+      activeProject: null,   // { id, name }
+      activeConstruct: null,  // { id, name }
+      pendingConfirm: null,  // { action: async function }
     };
 
     const termEl = document.getElementById('terminal');
@@ -114,9 +139,41 @@
       }
     }
 
+    // ── UI refresh helpers ──────────────────────────────────────────
+    function truncName(name, max) {
+      return name.length > max ? name.substring(0, max - 1) + '…' : name;
+    }
+
+    function updateStatusBar() {
+      const p = state.activeProject;
+      const c = state.activeConstruct;
+      const wsCount = Object.keys(state.workspace).length;
+      const sbP = document.getElementById('sb-project');
+      const sbC = document.getElementById('sb-construct');
+      const sbW = document.getElementById('sb-workspace');
+      sbP.textContent = p ? `Project: ${truncName(p.name, 20)}` : 'Project: none';
+      sbP.className = p ? 'active' : '';
+      sbC.textContent = c ? `Construct: ${truncName(c.name, 20)}` : 'Construct: none';
+      sbC.className = c ? 'active' : '';
+      sbW.textContent = `Workspace: ${wsCount} item${wsCount !== 1 ? 's' : ''}`;
+    }
+
+    function updatePrompt() {
+      const parts = ['genbit'];
+      if (state.activeProject) parts.push(truncName(state.activeProject.name, 20));
+      if (state.activeConstruct) parts.push(truncName(state.activeConstruct.name, 20));
+      document.querySelector('#input-area .prompt').textContent = parts.join('/') + '>';
+    }
+
+    function refreshUI() {
+      updateStatusBar();
+      updatePrompt();
+    }
+
     // ── Workspace helpers ───────────────────────────────────────────
     function wsStore(name, obj) {
       state.workspace[name] = obj;
+      refreshUI();
     }
 
     function wsGet(name) {
@@ -187,7 +244,7 @@
 
     // ── Command handlers ────────────────────────────────────────────
 
-    async function handleHelp(args) {
+    async function handleHelp(args, flags) {
       const topic = args[0];
       const sections = {
         gene: [
@@ -214,7 +271,7 @@
           '  Result saved as <name>-opt.',
           '  [--strategy=frequency|harmonized|balanced]',
           '  [--gc-min=0.4] [--gc-max=0.6]',
-          '  [--avoid=EcoRI,BamHI] [--no-repeats]',
+          '  [--avoid=EcoRI,BamHI] [--allow-repeats]',
           '  [--name=X] [--seq]',
         ],
         kozak: [
@@ -228,20 +285,26 @@
         ],
         project: [
           'project list                              List all projects',
-          'project create <name> [--desc=X]          Create project',
-          'project get <id>                          Get project details',
-          'project update <id> [--name=X] [--desc=X]',
-          'project delete <id>                       Delete project',
+          'project create <name> [--desc=X]          Create & activate project',
+          'project use <id>                           Set active project',
+          'project get [id]                           Get project details',
+          'project update [id] [--name=X] [--desc=X]',
+          'project delete [id]                        Delete project',
+          '',
+          '  Omit [id] to use the active project.',
         ],
         construct: [
-          'construct list --project=<id>             List constructs in project',
-          'construct create <name> --project=<id> [--organism=<tax_id>]',
-          'construct add <id> <workspace_name>       Add element from workspace',
+          'construct list [--project=<id>]            List constructs in project',
+          'construct create <name> [--project=<id>] [--organism=<tax_id>]',
+          'construct use <id>                         Set active construct',
+          'construct add [id] <workspace_name>        Add element from workspace',
           '  [--as=promoter|kozak|cds|terminator|tag|utr|custom]',
           '  [--position=N]',
-          'construct get <id>                        Show construct elements',
-          'construct delete <id>                     Delete construct',
-          'construct assemble <id> [--seq]           Assemble full sequence',
+          'construct get [id]                         Show construct elements',
+          'construct delete [id]                      Delete construct',
+          'construct assemble [id] [--seq]            Assemble full sequence',
+          '',
+          '  Omit [id] to use the active construct.',
         ],
         workspace: [
           'ws                                        List workspace objects',
@@ -253,6 +316,15 @@
           'rename <old> <new>                        Rename workspace object',
         ],
       };
+
+      if (flags && flags.json) {
+        if (topic && sections[topic]) {
+          printJson({ command: topic, usage: sections[topic] });
+        } else {
+          printJson(Object.fromEntries(Object.entries(sections).map(([k, v]) => [k, v])));
+        }
+        return;
+      }
 
       if (topic && sections[topic]) {
         sections[topic].forEach(l => print(l));
@@ -270,6 +342,7 @@
       });
       print('');
       print('Utility:', 'info');
+      print('  status                     Show active project & construct');
       print('  clear                      Clear terminal');
       print('  history                    Show command history');
       print('  set base-url <url>         Change backend URL');
@@ -349,6 +422,7 @@
       } else if (verb === 'get') {
         if (!args[1]) { print('Usage: protein get <accession>', 'warn'); return; }
         const data = await api('GET', `/api/proteins/${args[1]}`);
+        if (flags.json) { printJson(data); return; }
         printJson(data);
         print(`To save sequence to workspace: protein sequence ${args[1]} --name=<name>`, 'dim');
         return;
@@ -390,6 +464,7 @@
       } else if (verb === 'get') {
         if (!args[1]) { print('Usage: organism get <tax_id>', 'warn'); return; }
         const data = await api('GET', `/api/organisms/${args[1]}`);
+        if (flags.json) { printJson(data); return; }
         printJson(data);
         return;
       } else if (verb === 'codons') {
@@ -410,8 +485,26 @@
     async function handleOptimize(args, flags) {
       const ref = args[0];
       if (!ref || !flags.organism) {
-        print('Usage: optimize <name|accession> --organism=<tax_id> [--strategy=frequency]', 'warn');
-        print('  Accepts a workspace name or protein accession.', 'dim');
+        print('Usage: optimize <name|accession> --organism=<tax_id>', 'warn');
+        print('');
+        print('Required:', 'info');
+        print('  <name|accession>     Workspace name or UniProt accession (e.g. P04637)');
+        print('  --organism=<tax_id>  Target organism tax ID (e.g. 9606=human, 4932=yeast)');
+        print('');
+        print('Optional:', 'info');
+        print('  --strategy=<s>       Optimization strategy:');
+        print('      frequency    Most-used codons in target organism (default, good general choice)');
+        print('      harmonized   Matches codon usage ratios from source organism');
+        print('      balanced     Balances frequency with secondary structure avoidance');
+        print('  --gc-min=<0-1>       Minimum GC content (typical: 0.3–0.4)');
+        print('  --gc-max=<0-1>       Maximum GC content (typical: 0.6–0.7)');
+        print('  --avoid=<sites>      Restriction sites to avoid, comma-separated');
+        print('                       Common: EcoRI,BamHI,HindIII,NotI,XhoI');
+        print('  --allow-repeats      Allow sequence repeats (default: repeats are removed)');
+        print('  --name=<X>           Custom name for result (default: <input>-opt)');
+        print('  --seq                Print the optimized sequence');
+        print('');
+        print('Example: optimize P04637 --organism=9606 --strategy=frequency --avoid=EcoRI,BamHI', 'dim');
         return;
       }
 
@@ -455,7 +548,7 @@
         organism_tax_id: parseInt(flags.organism),
         strategy: flags.strategy || 'frequency',
         avoid_restriction_sites: flags.avoid ? flags.avoid.split(',') : [],
-        avoid_repeats: flags['no-repeats'] !== undefined ? false : true,
+        avoid_repeats: flags['allow-repeats'] !== undefined ? false : true,
       };
       if (flags['gc-min']) body.target_gc_min = parseFloat(flags['gc-min']);
       if (flags['gc-max']) body.target_gc_max = parseFloat(flags['gc-max']);
@@ -557,19 +650,34 @@
       if (verb === 'list') {
         const data = await api('GET', '/api/projects/');
         if (flags.json) { printJson(data); return; }
-        printTable(data, ['id', 'name', 'description', 'created_at']);
+        const rows = data.map(p => ({
+          ...p,
+          active: state.activeProject && state.activeProject.id === p.id ? '→' : '',
+        }));
+        printTable(rows, ['active', 'id', 'name', 'description', 'created_at']);
       } else if (verb === 'create') {
         const name = args.slice(1).join(' ');
         if (!name) { print('Usage: project create <name> [--desc=X]', 'warn'); return; }
         const body = { name, description: flags.desc || null };
         const data = await api('POST', '/api/projects/', body);
+        state.activeProject = { id: data.id, name: data.name };
+        refreshUI();
         if (flags.json) { printJson(data); return; }
         print(`Created project: ${data.id}`, 'success');
         print(`Name: ${data.name}`, 'info');
         if (data.description) print(`Description: ${data.description}`, 'dim');
-      } else if (verb === 'get') {
-        if (!args[1]) { print('Usage: project get <id>', 'warn'); return; }
+        print(`Active project set to '${data.name}'`, 'dim');
+      } else if (verb === 'use') {
+        if (!args[1]) { print('Usage: project use <id>', 'warn'); return; }
         const data = await api('GET', `/api/projects/${args[1]}`);
+        state.activeProject = { id: data.id, name: data.name };
+        refreshUI();
+        if (flags.json) { printJson({ active_project: state.activeProject }); return; }
+        print(`Active project: ${data.name} (${data.id})`, 'success');
+      } else if (verb === 'get') {
+        const id = args[1] || (state.activeProject && state.activeProject.id);
+        if (!id) { print('Usage: project get [id] — or set active with "project use <id>"', 'warn'); return; }
+        const data = await api('GET', `/api/projects/${id}`);
         if (flags.json) { printJson(data); return; }
         print(`Project: ${data.name}`, 'info');
         print(`ID: ${data.id}`, 'dim');
@@ -581,64 +689,112 @@
           printTable(data.constructs, ['id', 'name', 'organism_tax_id', 'updated_at']);
         }
       } else if (verb === 'update') {
-        if (!args[1]) { print('Usage: project update <id> [--name=X] [--desc=X]', 'warn'); return; }
+        const id = args[1] || (state.activeProject && state.activeProject.id);
+        if (!id) { print('Usage: project update [id] [--name=X] [--desc=X]', 'warn'); return; }
         const body = {};
         if (flags.name) body.name = flags.name;
         if (flags.desc) body.description = flags.desc;
-        const data = await api('PUT', `/api/projects/${args[1]}`, body);
+        const data = await api('PUT', `/api/projects/${id}`, body);
         print('Updated.', 'success');
       } else if (verb === 'delete') {
-        if (!args[1]) { print('Usage: project delete <id>', 'warn'); return; }
-        await api('DELETE', `/api/projects/${args[1]}`);
-        print('Deleted.', 'success');
+        const id = args[1] || (state.activeProject && state.activeProject.id);
+        if (!id) { print('Usage: project delete [id]', 'warn'); return; }
+        const name = (state.activeProject && state.activeProject.id === id) ? state.activeProject.name : id;
+        print(`Delete project '${name}'? This cannot be undone. (y/n)`, 'warn');
+        state.pendingConfirm = {
+          action: async () => {
+            await api('DELETE', `/api/projects/${id}`);
+            if (state.activeProject && state.activeProject.id === id) state.activeProject = null;
+            refreshUI();
+            print('Deleted.', 'success');
+          }
+        };
       } else {
-        print('Usage: project list|create|get|update|delete ...', 'warn');
+        print('Usage: project list|create|use|get|update|delete ...', 'warn');
+      }
+    }
+
+    function printConstructElements(data) {
+      if (data.elements && data.elements.length) {
+        print('');
+        print('Current elements:', 'info');
+        const rows = data.elements
+          .sort((a, b) => a.position - b.position)
+          .map(el => ({
+            position: el.position,
+            label: el.label,
+            type: el.element_type,
+            length: el.sequence ? `${el.sequence.length} bp` : '—',
+          }));
+        printTable(rows, ['position', 'label', 'type', 'length']);
       }
     }
 
     async function handleConstruct(args, flags) {
       const verb = args[0];
       if (verb === 'list') {
-        if (!flags.project) {
-          print('Usage: construct list --project=<id>', 'warn');
+        const projectId = flags.project || (state.activeProject && state.activeProject.id);
+        if (!projectId) {
+          print('Usage: construct list [--project=<id>] — or set active with "project use <id>"', 'warn');
           return;
         }
-        const data = await api('GET', `/api/constructs/?project_id=${encodeURIComponent(flags.project)}`);
+        const data = await api('GET', `/api/constructs/?project_id=${encodeURIComponent(projectId)}`);
         if (flags.json) { printJson(data); return; }
         if (!data.length) {
           print('No constructs in this project.', 'dim');
           return;
         }
         const rows = data.map(c => ({
+          active: state.activeConstruct && state.activeConstruct.id === c.id ? '→' : '',
           id: c.id,
           name: c.name,
           organism: c.organism_tax_id || '—',
           elements: c.elements ? c.elements.length : 0,
           created_at: c.created_at,
         }));
-        printTable(rows, ['id', 'name', 'organism', 'elements', 'created_at']);
+        printTable(rows, ['active', 'id', 'name', 'organism', 'elements', 'created_at']);
       } else if (verb === 'create') {
         const name = args.slice(1).join(' ');
-        if (!name || !flags.project) {
-          print('Usage: construct create <name> --project=<id> [--organism=<tax_id>]', 'warn');
+        const projectId = flags.project || (state.activeProject && state.activeProject.id);
+        if (!name || !projectId) {
+          print('Usage: construct create <name> [--project=<id>] [--organism=<tax_id>]', 'warn');
+          if (!projectId) print('No active project. Use "project use <id>" or pass --project=<id>.', 'dim');
           return;
         }
         const body = {
-          project_id: flags.project,
+          project_id: projectId,
           name: name,
           organism_tax_id: flags.organism ? parseInt(flags.organism) : null,
           elements: [],
         };
         const data = await api('POST', '/api/constructs/', body);
+        state.activeConstruct = { id: data.id, name: data.name };
+        refreshUI();
         if (flags.json) { printJson(data); return; }
         print(`Created construct: ${data.id}`, 'success');
         print(`Name: ${data.name}`, 'info');
-        print(`Next: construct add ${data.id} <workspace_name> --as=cds|promoter|...`, 'dim');
+        print(`Active construct set to '${data.name}'`, 'dim');
+        print(`Next: construct add <workspace_name> --as=cds|promoter|...`, 'dim');
+      } else if (verb === 'use') {
+        if (!args[1]) { print('Usage: construct use <id>', 'warn'); return; }
+        const data = await api('GET', `/api/constructs/${args[1]}`);
+        state.activeConstruct = { id: data.id, name: data.name };
+        refreshUI();
+        if (flags.json) { printJson({ active_construct: state.activeConstruct }); return; }
+        print(`Active construct: ${data.name} (${data.id})`, 'success');
       } else if (verb === 'add') {
-        const constructId = args[1];
-        const wsName = args[2];
+        // If only one arg after 'add', treat it as wsName using active construct
+        let constructId, wsName;
+        if (args[2]) {
+          constructId = args[1];
+          wsName = args[2];
+        } else if (args[1]) {
+          constructId = state.activeConstruct && state.activeConstruct.id;
+          wsName = args[1];
+        }
         if (!constructId || !wsName) {
-          print('Usage: construct add <construct_id> <workspace_name> [--as=type] [--position=N]', 'warn');
+          print('Usage: construct add [construct_id] <workspace_name> [--as=type] [--position=N]', 'warn');
+          if (!constructId) print('No active construct. Use "construct use <id>" or pass the construct ID.', 'dim');
           return;
         }
         const wsObj = wsGet(wsName);
@@ -679,39 +835,46 @@
         updatedElements.push(newElement);
         updatedElements.sort((a, b) => a.position - b.position);
 
-        const updateResult = await api('PUT', `/api/constructs/${constructId}`, { elements: updatedElements });
-        if (flags.json) { printJson(updateResult); return; }
+        await api('PUT', `/api/constructs/${constructId}`, { elements: updatedElements });
+        if (flags.json) {
+          const freshJson = await api('GET', `/api/constructs/${constructId}`);
+          printJson(freshJson);
+          return;
+        }
         print(`Added '${wsName}' as ${elementType} at position ${nextPos} (${wsObj.length} ${wsUnit(wsObj.type)})`, 'success');
+        const fresh = await api('GET', `/api/constructs/${constructId}`);
+        printConstructElements(fresh);
 
       } else if (verb === 'get') {
-        if (!args[1]) { print('Usage: construct get <id>', 'warn'); return; }
-        const data = await api('GET', `/api/constructs/${args[1]}`);
+        const id = args[1] || (state.activeConstruct && state.activeConstruct.id);
+        if (!id) { print('Usage: construct get [id] — or set active with "construct use <id>"', 'warn'); return; }
+        const data = await api('GET', `/api/constructs/${id}`);
         if (flags.json) { printJson(data); return; }
         print(`Construct: ${data.name}`, 'info');
         print(`ID: ${data.id}`, 'dim');
         if (data.organism_tax_id) print(`Organism: ${data.organism_tax_id}`);
         if (data.elements && data.elements.length) {
-          print('');
-          print('Elements:', 'info');
-          const rows = data.elements
-            .sort((a, b) => a.position - b.position)
-            .map(el => ({
-              position: el.position,
-              label: el.label,
-              type: el.element_type,
-              length: el.sequence ? `${el.sequence.length} bp` : '—',
-            }));
-          printTable(rows, ['position', 'label', 'type', 'length']);
+          printConstructElements(data);
         } else {
-          print('No elements yet. Use "construct add <id> <workspace_name>" to add elements.', 'dim');
+          print('No elements yet. Use "construct add <workspace_name>" to add elements.', 'dim');
         }
       } else if (verb === 'delete') {
-        if (!args[1]) { print('Usage: construct delete <id>', 'warn'); return; }
-        await api('DELETE', `/api/constructs/${args[1]}`);
-        print('Deleted.', 'success');
+        const id = args[1] || (state.activeConstruct && state.activeConstruct.id);
+        if (!id) { print('Usage: construct delete [id]', 'warn'); return; }
+        const name = (state.activeConstruct && state.activeConstruct.id === id) ? state.activeConstruct.name : id;
+        print(`Delete construct '${name}'? This cannot be undone. (y/n)`, 'warn');
+        state.pendingConfirm = {
+          action: async () => {
+            await api('DELETE', `/api/constructs/${id}`);
+            if (state.activeConstruct && state.activeConstruct.id === id) state.activeConstruct = null;
+            refreshUI();
+            print('Deleted.', 'success');
+          }
+        };
       } else if (verb === 'assemble') {
-        if (!args[1]) { print('Usage: construct assemble <id> [--seq]', 'warn'); return; }
-        const data = await api('POST', `/api/constructs/${args[1]}/assemble`);
+        const id = args[1] || (state.activeConstruct && state.activeConstruct.id);
+        if (!id) { print('Usage: construct assemble [id] [--seq]', 'warn'); return; }
+        const data = await api('POST', `/api/constructs/${id}/assemble`);
         if (flags.json) { printJson(data); return; }
         if (data.full_sequence) {
           print(`Total length: ${data.full_sequence.length} bp`, 'info');
@@ -821,6 +984,7 @@
       }
       delete state.workspace[name];
       print(`Removed '${name}' from workspace.`, 'success');
+      refreshUI();
     }
 
     function handleRename(args) {
@@ -837,11 +1001,12 @@
       state.workspace[newName] = state.workspace[oldName];
       delete state.workspace[oldName];
       print(`Renamed '${oldName}' → '${newName}'`, 'success');
+      refreshUI();
     }
 
     // ── Command dispatch ────────────────────────────────────────────
     const commands = {
-      help: (a, f) => handleHelp(a),
+      help: (a, f) => handleHelp(a, f),
       health: (a, f) => handleHealth(a, f),
       gene: handleGene,
       protein: handleProtein,
@@ -856,6 +1021,13 @@
       show: handleShow,
       rm: handleRm,
       rename: handleRename,
+      status: (a, f) => {
+        const p = state.activeProject;
+        const c = state.activeConstruct;
+        if (f && f.json) { printJson({ active_project: p, active_construct: c }); return; }
+        print(`Project:   ${p ? p.name + ' (' + p.id + ')' : 'none'}`, p ? 'info' : 'dim');
+        print(`Construct: ${c ? c.name + ' (' + c.id + ')' : 'none'}`, c ? 'info' : 'dim');
+      },
       clear: () => { termEl.innerHTML = ''; },
       history: () => { state.history.forEach((h, i) => print(`  ${i + 1}  ${h}`)); },
       set: (args) => {
@@ -872,10 +1044,24 @@
       const trimmed = input.trim();
       if (!trimmed) return;
 
+      // Handle pending confirmation (y/n for destructive actions)
+      if (state.pendingConfirm) {
+        const pending = state.pendingConfirm;
+        state.pendingConfirm = null;
+        print(`> ${trimmed}`, 'dim');
+        if (trimmed.toLowerCase() === 'y' || trimmed.toLowerCase() === 'yes') {
+          try { await pending.action(); } catch (e) { print(`ERROR: ${e.message}`, 'error'); }
+        } else {
+          print('Cancelled.', 'dim');
+        }
+        print('');
+        return;
+      }
+
       state.history.push(trimmed);
       state.historyIndex = state.history.length;
 
-      print(`genbit> ${trimmed}`, 'dim');
+      print(`${document.querySelector('#input-area .prompt').textContent} ${trimmed}`, 'dim');
 
       const { args, flags } = parseCommand(trimmed);
       if (args.length === 0) return;
@@ -924,8 +1110,10 @@
       }
     });
 
-    // Focus input when clicking anywhere
-    document.body.addEventListener('click', () => cmdEl.focus());
+    // Focus input when clicking anywhere, but not if the user is selecting text
+    document.body.addEventListener('click', () => {
+      if (!window.getSelection().toString()) cmdEl.focus();
+    });
 
     // ── Startup banner ──────────────────────────────────────────────
     print('╔══════════════════════════════════════════╗', 'info');
@@ -937,6 +1125,7 @@
     print("Type 'help' for commands. Sequences are saved to your workspace.", 'dim');
     print("Use 'ws' to list saved objects, 'show <name>' to view a sequence.", 'dim');
     print('');
+    refreshUI();
   </script>
 </body>
 </html>

@@ -1,0 +1,12 @@
+Organism,Clade/Group,Organism Type,Kozak Consensus,Combination 1,Combination 2,Combination 3,Combination 4,Combination 5,Combination 6,Combination 7,Combination 8
+Vertebrate (Kozak 1987),Vertebrata,Animals (vertebrates — mammals fish birds reptiles amphibians),gccRccATGG,gccAccATG,gccGccATG,,,,,,
+Fruit fly (Drosophila spp.),Arthropoda,Animals (invertebrates — insects spiders crustaceans),atMAAMATGamc,atAAAAAATG,atAAAAAATG,atACAAATG,atACAAATG,atCAAAATG,atCAAAATG,atCCAAATG,atCCAAATG
+Budding yeast (Saccharomyces cerevisiae),Ascomycota,Fungi (ascomycete yeasts and molds),aAaAaAATGTCt,aAaAaAATG,,,,,,,
+Slime mold (Dictyostelium discoideum),Amoebozoa,Amoebozoa (social amoebae),aaaAAAATGRna,aaaAAAATG,aaaAAAATG,aaaAAAATG,aaaAAAATG,aaaAAAATG,aaaAAAATG,aaaAAAATG,aaaAAAATG
+Ciliate,Ciliophora,Protists (ciliates e.g. Paramecium Tetrahymena),nTaAAAATGRct,aTaAAAATG,aTaAAAATG,cTaAAAATG,cTaAAAATG,gTaAAAATG,gTaAAAATG,tTaAAAATG,tTaAAAATG
+Malarial protozoa (Plasmodium spp.),Apicomplexa,Protists (apicomplexan parasites),taaAAAATG,taaAAAATG,taaAAAATG,taaAAAATG,taaAAAATG,,,,
+Toxoplasma (Toxoplasma gondii),Apicomplexa,Protists (apicomplexan parasites),gncAaaATG,gacAaaATG,gccAaaATG,ggcAaaATG,gtcAaaATG,,,,
+Trypanosomatidae,Euglenozoa,Protists (kinetoplastid parasites e.g. Trypanosoma Leishmania),nnnAnnATGnC,"Lots of possible combinations, but any base pair for n",,,,,,,
+Terrestrial plants,Embryophyta,Plants (mosses ferns gymnosperms angiosperms),acAACAATGGC,acAACAATG,,,,,,,
+Microalga (Chlamydomonas reinhardtii),Chlorophyta,Plants (green algae),gccAaCATGGcg,gccAaCATG,,,,,,,
+S. cerevisiae + K. lactis,S. cerevisiae + K. lactis,S. cerevisiae + K. lactis,"Special (alpha mating factor), if included, the yeast will secrete the desired protein",aAaAaAATGAAATTCTCTACTATATTAGCCGCATCTACTGCTTTAATTTCCGTTGTTATGGCTGCTCCAGTTTCTACCGAAACTGACATCGACGATCTTCCAATATCGGTTCCAGAAGAAGCCTTGATTGGATTCATTGACTTAACCGGGGATGAAGTTTCCTTGTTGCCTGTTAATAACGGAACCCACACTGGTATTCTATTCTTAAACACCACCATCGCTGAAGCTGCTTTCGCTGACAAGGATGATCTCGAGAAAAGAGAGGCTGAAGCT,,,,,,,

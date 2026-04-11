@@ -1,28 +1,110 @@
 """Kozak sequence generation for different organisms.
 
-Kozak consensus varies by species:
-- Vertebrates: GCC(A/G)CCAUGG  -> GCCACCATGG (strong) or GCCGCCATGG
-- Yeast (S. cerevisiae): (A/Y)A(A/U)A(A/U)AAUGUCU
-- Plants: AACAAUGGC
-- Drosophila: C/AAAA/CAUGG
+Loads organism-specific Kozak consensus sequences from CSV data file.
 """
 
-# Organism-specific Kozak consensus sequences
-KOZAK_CONSENSUS = {
+import csv
+from pathlib import Path
+
+DATA_DIR = Path(__file__).resolve().parent.parent.parent / "data"
+
+# Load Kozak data from CSV at import time
+_KOZAK_DATA: list[dict] = []
+
+
+def _load_kozak_data() -> list[dict]:
+    global _KOZAK_DATA
+    if _KOZAK_DATA:
+        return _KOZAK_DATA
+
+    csv_path = DATA_DIR / "kozak_sequences.csv"
+    with open(csv_path, newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            # Collect non-empty combinations
+            combinations = []
+            for i in range(1, 9):
+                val = row.get(f"Combination {i}", "").strip()
+                if val and not val.startswith("Lots of"):
+                    combinations.append(val.upper())
+
+            _KOZAK_DATA.append({
+                "organism": row["Organism"].strip(),
+                "clade": row.get("Clade/Group", "").strip(),
+                "organism_type": row.get("Organism Type", "").strip(),
+                "consensus": row.get("Kozak Consensus", "").strip(),
+                "combinations": combinations,
+            })
+
+    return _KOZAK_DATA
+
+
+# Map common tax IDs to CSV organism names for lookup
+_TAX_ID_MAP = {
     # Vertebrates
-    "vertebrate": {"consensus": "GCCACCATGG", "notes": "Strong Kozak (Kozak, 1987)"},
-    9606: {"consensus": "GCCACCATGG", "notes": "Human - strong vertebrate Kozak"},
-    10090: {"consensus": "GCCACCATGG", "notes": "Mouse - strong vertebrate Kozak"},
-    10116: {"consensus": "GCCACCATGG", "notes": "Rat - strong vertebrate Kozak"},
-    9913: {"consensus": "GCCACCATGG", "notes": "Bovine - strong vertebrate Kozak"},
-    # Yeast
-    4932: {"consensus": "AAAAAUGTCT", "notes": "S. cerevisiae Kozak-like context"},
-    # Plants
-    3702: {"consensus": "AACAATGGC", "notes": "A. thaliana translation initiation context"},
+    9606: "Vertebrate",
+    10090: "Vertebrate",
+    10116: "Vertebrate",
+    9913: "Vertebrate",
+    9031: "Vertebrate",
+    7955: "Vertebrate",
     # Drosophila
-    7227: {"consensus": "CAACATGG", "notes": "D. melanogaster Kozak"},
-    # E. coli (uses Shine-Dalgarno, not Kozak)
-    562: {"consensus": "AGGAGGATGG", "notes": "E. coli Shine-Dalgarno + start codon"},
+    7227: "Fruit fly",
+    # Yeast
+    4932: "Budding yeast",
+    28985: "Kluyveromyces",  # K. lactis
+    # Plants
+    3702: "Terrestrial plants",
+    4577: "Terrestrial plants",  # Zea mays
+    4530: "Terrestrial plants",  # Oryza sativa
+    # Green algae
+    3055: "Microalga",  # Chlamydomonas
+    # Slime mold
+    44689: "Slime mold",
+    # Plasmodium
+    5833: "Malarial",
+    36329: "Malarial",
+    # Toxoplasma
+    5811: "Toxoplasma",
+    # Ciliates
+    5888: "Ciliate",  # Paramecium
+    5911: "Ciliate",  # Tetrahymena
+    # Trypanosomatidae
+    5691: "Trypanosomatidae",  # Trypanosoma
+    5660: "Trypanosomatidae",  # Leishmania
+    # E. coli — uses Shine-Dalgarno, not Kozak
+    562: None,
+}
+
+
+def _find_kozak_entry(organism_tax_id: int) -> dict | None:
+    """Find the best matching Kozak entry for a given tax ID."""
+    data = _load_kozak_data()
+
+    # Check tax ID map first
+    search_term = _TAX_ID_MAP.get(organism_tax_id)
+    if search_term is None and organism_tax_id in _TAX_ID_MAP:
+        # Explicitly mapped to None (e.g., E. coli)
+        return None
+
+    if search_term:
+        for entry in data:
+            if search_term.lower() in entry["organism"].lower():
+                return entry
+
+    # Default to vertebrate
+    for entry in data:
+        if "vertebrate" in entry["organism"].lower():
+            return entry
+
+    return None
+
+
+# Shine-Dalgarno for prokaryotes
+_SHINE_DALGARNO = {
+    "consensus": "AGGAGGATGG",
+    "notes": "E. coli Shine-Dalgarno + start codon",
+    "organism": "E. coli",
 }
 
 
@@ -31,21 +113,47 @@ def generate_kozak(organism_tax_id: int, start_codon: str = "ATG") -> dict:
 
     Returns dict with consensus, sequence, organism info, and notes.
     """
-    # Look up by exact tax_id first
-    if organism_tax_id in KOZAK_CONSENSUS:
-        entry = KOZAK_CONSENSUS[organism_tax_id]
-    else:
-        # Default to vertebrate Kozak
-        entry = KOZAK_CONSENSUS["vertebrate"]
+    # E. coli and other prokaryotes use Shine-Dalgarno
+    if organism_tax_id == 562:
+        consensus = _SHINE_DALGARNO["consensus"]
+        if start_codon != "ATG":
+            consensus = consensus.replace("ATG", start_codon)
+        return {
+            "organism_tax_id": organism_tax_id,
+            "organism": _SHINE_DALGARNO["organism"],
+            "consensus": _SHINE_DALGARNO["consensus"],
+            "sequence": consensus,
+            "notes": _SHINE_DALGARNO["notes"],
+        }
+
+    entry = _find_kozak_entry(organism_tax_id)
+    if not entry:
+        # Fallback to vertebrate consensus
+        return {
+            "organism_tax_id": organism_tax_id,
+            "organism": "Unknown (defaulting to vertebrate)",
+            "consensus": "GCCACCATGG",
+            "sequence": "GCCACCATGG" if start_codon == "ATG" else "GCCACC" + start_codon + "G",
+            "notes": "Default vertebrate Kozak (organism not in database)",
+        }
 
     consensus = entry["consensus"]
-    # Replace the ATG in consensus with user-specified start codon if different
-    if start_codon != "ATG":
-        consensus = consensus.replace("ATG", start_codon)
+    # Use the first concrete combination as the sequence
+    if entry["combinations"]:
+        sequence = entry["combinations"][0]
+    else:
+        sequence = consensus.upper()
 
+    # Replace ATG with user-specified start codon if different
+    if start_codon != "ATG":
+        sequence = sequence.replace("ATG", start_codon)
+
+    organism_name = entry["organism"]
     return {
         "organism_tax_id": organism_tax_id,
-        "consensus": entry["consensus"],
-        "sequence": consensus,
-        "notes": entry["notes"],
+        "organism": organism_name,
+        "consensus": consensus,
+        "sequence": sequence,
+        "notes": f"{organism_name} Kozak consensus from {entry['clade']}",
+        "combinations": entry["combinations"],
     }
