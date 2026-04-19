@@ -82,6 +82,27 @@ async def update_construct(
     return await get_construct(db, construct_id)
 
 
+async def update_element_label(
+    db: AsyncSession,
+    construct_id: uuid.UUID,
+    position: int,
+    label: str,
+) -> ConstructElement | None:
+    result = await db.execute(
+        select(ConstructElement).where(
+            ConstructElement.construct_id == construct_id,
+            ConstructElement.position == position,
+        )
+    )
+    element = result.scalar_one_or_none()
+    if not element:
+        return None
+    element.label = label
+    await db.commit()
+    await db.refresh(element)
+    return element
+
+
 async def delete_construct(db: AsyncSession, construct_id: uuid.UUID) -> bool:
     construct = await db.get(Construct, construct_id)
     if not construct:

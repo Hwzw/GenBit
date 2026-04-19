@@ -27,6 +27,14 @@ class ConstructUpdate(BaseModel):
     elements: list[ConstructElementSchema] | None = None
 
 
+class ConstructElementLabelUpdate(BaseModel):
+    label: str = Field(..., max_length=255)
+
+
+class RestrictionDigestRequest(BaseModel):
+    enzymes: list[str] = Field(..., min_length=1, max_length=20)
+
+
 class ConstructResponse(BaseModel):
     id: uuid.UUID
     project_id: uuid.UUID

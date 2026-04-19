@@ -4,22 +4,53 @@ Takes ordered genetic elements and assembles them into a full construct sequence
 Validates junctions and reading frames.
 """
 
+from app.models.construct_element import ElementType
 from app.schemas.construct import ConstructElementSchema
+from app.services.codon_optimization_service import select_stop_codons
+from app.services.organism_service import get_codon_table
 
 
-def assemble_construct(elements: list[ConstructElementSchema]) -> dict:
+def assemble_construct(
+    elements: list[ConstructElementSchema],
+    organism_tax_id: int | None = None,
+) -> dict:
     """Assemble ordered elements into a complete construct sequence.
+
+    Injects a single tandem stop-codon element immediately after the last CDS
+    so multi-CDS constructs don't carry internal stop codons on every CDS.
 
     Returns dict with full_sequence, length, annotations (element positions).
     """
     sorted_elements = sorted(elements, key=lambda e: e.position)
 
+    last_cds_idx = next(
+        (i for i in range(len(sorted_elements) - 1, -1, -1)
+         if sorted_elements[i].element_type == ElementType.CDS),
+        None,
+    )
+    if last_cds_idx is not None:
+        codon_table = get_codon_table(organism_tax_id).table if organism_tax_id else {}
+        last_cds = sorted_elements[last_cds_idx]
+        stop_element = ConstructElementSchema(
+            element_type=ElementType.STOP_CODON,
+            label=f"stop-{last_cds.label}",
+            sequence=select_stop_codons(codon_table),
+            position=last_cds.position,
+        )
+        sorted_elements.insert(last_cds_idx + 1, stop_element)
+
+    first_cds_idx = next(
+        (i for i, e in enumerate(sorted_elements) if e.element_type == ElementType.CDS),
+        None,
+    )
+
     full_sequence = ""
     annotations = []
     current_pos = 0
     prev_element = None
+    warnings: list[str] = []
 
-    for element in sorted_elements:
+    for i, element in enumerate(sorted_elements):
         seq = element.sequence
 
         # Handle Kozak→CDS junction: the Kozak includes ATG (start codon)
@@ -39,6 +70,16 @@ def assemble_construct(elements: list[ConstructElementSchema]) -> dict:
 
             # Keep the CDS sequence intact (including its ATG)
 
+        # If the first CDS has no ATG at its start (and none sits immediately
+        # before it in the assembled sequence), inject a start codon.
+        if i == first_cds_idx and not (
+            seq.upper().startswith("ATG") or full_sequence[-3:].upper() == "ATG"
+        ):
+            seq = "ATG" + seq
+            warnings.append(
+                f"First CDS '{element.label}' had no ATG at its start; injected a start codon."
+            )
+
         start = current_pos
         full_sequence += seq
         end = current_pos + len(seq)
@@ -57,6 +98,7 @@ def assemble_construct(elements: list[ConstructElementSchema]) -> dict:
         "length": len(full_sequence),
         "annotations": annotations,
         "element_count": len(sorted_elements),
+        "warnings": warnings,
     }
 
 

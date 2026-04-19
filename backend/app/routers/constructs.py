@@ -1,12 +1,25 @@
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_db, get_session_id
 from app.models.project import Project
-from app.schemas.construct import ConstructCreate, ConstructElementSchema, ConstructResponse, ConstructUpdate
-from app.services import construct_assembly_service, construct_service
+from app.schemas.construct import (
+    ConstructCreate,
+    ConstructElementLabelUpdate,
+    ConstructElementSchema,
+    ConstructResponse,
+    ConstructUpdate,
+    RestrictionDigestRequest,
+)
+from app.services import (
+    construct_assembly_service,
+    construct_service,
+    genbank_export_service,
+    restriction_digest_service,
+)
 
 router = APIRouter()
 
@@ -72,6 +85,21 @@ async def update_construct(
     return construct
 
 
+@router.patch("/{construct_id}/elements/{position}", response_model=ConstructElementSchema)
+async def update_element_label(
+    construct_id: uuid.UUID,
+    position: int,
+    data: ConstructElementLabelUpdate,
+    db: AsyncSession = Depends(get_db),
+    session_id: str = Depends(get_session_id),
+):
+    await _verify_construct_session(db, construct_id, session_id)
+    element = await construct_service.update_element_label(db, construct_id, position, data.label)
+    if not element:
+        raise HTTPException(status_code=404, detail="Element not found")
+    return element
+
+
 @router.delete("/{construct_id}")
 async def delete_construct(
     construct_id: uuid.UUID,
@@ -95,4 +123,54 @@ async def assemble_construct(
     elements = [
         ConstructElementSchema.model_validate(e, from_attributes=True) for e in construct.elements
     ]
-    return construct_assembly_service.assemble_construct(elements)
+    return construct_assembly_service.assemble_construct(
+        elements, organism_tax_id=construct.organism_tax_id
+    )
+
+
+@router.post("/{construct_id}/digest")
+async def digest_construct(
+    construct_id: uuid.UUID,
+    data: RestrictionDigestRequest,
+    db: AsyncSession = Depends(get_db),
+    session_id: str = Depends(get_session_id),
+):
+    construct = await _verify_construct_session(db, construct_id, session_id)
+    if not construct.elements:
+        raise HTTPException(status_code=400, detail="Construct has no elements to digest")
+    elements = [
+        ConstructElementSchema.model_validate(e, from_attributes=True) for e in construct.elements
+    ]
+    assembly = construct_assembly_service.assemble_construct(
+        elements, organism_tax_id=construct.organism_tax_id
+    )
+    return restriction_digest_service.digest(
+        sequence=assembly["full_sequence"],
+        enzyme_names=data.enzymes,
+        annotations=assembly["annotations"],
+    )
+
+
+@router.get("/{construct_id}/export")
+async def export_construct(
+    construct_id: uuid.UUID,
+    format: str = Query("genbank", pattern="^(genbank)$"),
+    db: AsyncSession = Depends(get_db),
+    session_id: str = Depends(get_session_id),
+):
+    construct = await _verify_construct_session(db, construct_id, session_id)
+    if not construct.elements:
+        raise HTTPException(status_code=400, detail="Construct has no elements to export")
+    elements = [
+        ConstructElementSchema.model_validate(e, from_attributes=True) for e in construct.elements
+    ]
+    assembly = construct_assembly_service.assemble_construct(
+        elements, organism_tax_id=construct.organism_tax_id
+    )
+    gb = genbank_export_service.build_genbank(construct, assembly)
+    filename = genbank_export_service.sanitize_filename(construct.name) + ".gb"
+    return Response(
+        content=gb,
+        media_type="text/plain",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )

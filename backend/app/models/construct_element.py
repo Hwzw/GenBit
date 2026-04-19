@@ -13,6 +13,7 @@ class ElementType(enum.StrEnum):
     PROMOTER = "promoter"
     KOZAK = "kozak"
     CDS = "cds"
+    STOP_CODON = "stop_codon"
     TERMINATOR = "terminator"
     TAG = "tag"
     UTR = "utr"

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>GenBit Terminal</title>
+  <title>Deoxyer Terminal</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
@@ -31,6 +31,15 @@
     .codon-a { color: #79c0ff; }
     .codon-b { color: #d2a8ff; }
     .codon-c { color: #7ee787; }
+    /* Per-CDS palettes: 3 lightness shades of one hue per CDS.
+       Shades distinguish reading-frame codons within a CDS;
+       hues distinguish adjacent CDSes. */
+    .codon-p0-a { color: #a8d8ff; } .codon-p0-b { color: #79c0ff; } .codon-p0-c { color: #4a9bff; }
+    .codon-p1-a { color: #e4c3ff; } .codon-p1-b { color: #d2a8ff; } .codon-p1-c { color: #b27de8; }
+    .codon-p2-a { color: #a8f0b1; } .codon-p2-b { color: #7ee787; } .codon-p2-c { color: #4fcb5d; }
+    .codon-p3-a { color: #ffcda0; } .codon-p3-b { color: #ffa657; } .codon-p3-c { color: #e88530; }
+    .codon-p4-a { color: #ffbdd9; } .codon-p4-b { color: #ff93bc; } .codon-p4-c { color: #e46a96; }
+    .codon-p5-a { color: #a8e8ed; } .codon-p5-b { color: #76e3ea; } .codon-p5-c { color: #40bdc6; }
     .codon-start { color: #f85149; font-weight: bold; }
     .codon-stop { color: #f85149; font-weight: bold; }
     .seq-noncds { color: #8b949e; }
@@ -88,7 +97,7 @@
   </div>
   <div id="terminal"></div>
   <div id="input-area">
-    <span class="prompt">genbit&gt;</span>
+    <span class="prompt">deoxyer&gt;</span>
     <input type="text" id="cmd" autofocus autocomplete="off" spellcheck="false">
   </div>
 
@@ -179,7 +188,15 @@
     }
 
     const STOP_CODONS = new Set(['TAA', 'TAG', 'TGA']);
-    const CODON_CLASSES = ['codon-a', 'codon-b', 'codon-c'];
+    // Each CDS cycles through its own 3-shade palette; adjacent CDSes get different hues.
+    const CDS_PALETTES = [
+      ['codon-p0-a', 'codon-p0-b', 'codon-p0-c'],
+      ['codon-p1-a', 'codon-p1-b', 'codon-p1-c'],
+      ['codon-p2-a', 'codon-p2-b', 'codon-p2-c'],
+      ['codon-p3-a', 'codon-p3-b', 'codon-p3-c'],
+      ['codon-p4-a', 'codon-p4-b', 'codon-p4-c'],
+      ['codon-p5-a', 'codon-p5-b', 'codon-p5-c'],
+    ];
 
     /**
      * Print a sequence with codon color-coding.
@@ -196,6 +213,7 @@
         promoter: 'seq-promoter',
         kozak: 'seq-kozak',
         terminator: 'seq-terminator',
+        stop_codon: 'codon-stop',
       };
 
       // Find the annotation at a given position
@@ -205,6 +223,15 @@
           if (pos >= a.start && pos < a.end) return a;
         }
         return null;
+      }
+
+      // Assign a palette index to each CDS annotation (by order of appearance)
+      const cdsPaletteIdx = new Map();
+      if (annotations) {
+        let n = 0;
+        for (const a of annotations) {
+          if (a.type === 'cds') cdsPaletteIdx.set(a, n++);
+        }
       }
 
       // Build spans: CDS regions get codon coloring, others get subtle type-based color
@@ -223,13 +250,14 @@
           const end = Math.min(codonStart + 3, upper.length);
           const codonText = upper.substring(codonStart, end);
           if (frameOffset === 0) {
+            const palette = CDS_PALETTES[(cdsPaletteIdx.get(ann) || 0) % CDS_PALETTES.length];
             let cls;
             if (codonIdx === 0 && codonText === 'ATG') {
               cls = 'codon-start';
             } else if (STOP_CODONS.has(codonText)) {
               cls = 'codon-stop';
             } else {
-              cls = CODON_CLASSES[codonIdx % 3];
+              cls = palette[codonIdx % 3];
             }
             spans.push({ text: codonText, cls });
           }
@@ -279,6 +307,74 @@
       termEl.scrollTop = termEl.scrollHeight;
     }
 
+    // Benchling-style in-series diagram. Arrow widths scale with log(length)
+    // so short features are not dwarfed by a CDS an order of magnitude longer.
+    function printConstructDiagram(annotations) {
+      if (!annotations || !annotations.length) return;
+      const NON_CDS_CLASSES = {
+        promoter: 'seq-promoter',
+        kozak: 'seq-kozak',
+        terminator: 'seq-terminator',
+        stop_codon: 'codon-stop',
+      };
+      const K = 3;
+      const MIN_W = 4, MAX_W = 60;
+      let cdsSeen = 0;
+      const cells = annotations.map(a => {
+        const len = Math.max(2, a.length || (a.end - a.start));
+        const w = Math.max(MIN_W, Math.min(MAX_W, Math.round(Math.log(len) * K)));
+        let arrow;
+        if (a.type === 'terminator') arrow = '━'.repeat(w - 1) + '┫';
+        else if (a.type === 'promoter') arrow = '┗' + '━'.repeat(w - 2) + '▶';
+        else if (a.type === 'kozak') arrow = '━'.repeat(w - 1) + '▷';
+        else arrow = '━'.repeat(w - 1) + '▶';
+        let cls;
+        if (a.type === 'cds') {
+          cls = CDS_PALETTES[cdsSeen % CDS_PALETTES.length][1];
+          cdsSeen++;
+        } else {
+          cls = NON_CDS_CLASSES[a.type] || '';
+        }
+        return {
+          w,
+          arrow,
+          name: a.label || a.type || '',
+          bp: (a.length || (a.end - a.start)) + ' bp',
+          cls,
+        };
+      });
+
+      const center = (text, w) => {
+        if (text.length > w) return text.substring(0, Math.max(0, w - 1)) + '…';
+        const pad = w - text.length;
+        const left = Math.floor(pad / 2);
+        return ' '.repeat(left) + text + ' '.repeat(pad - left);
+      };
+
+      const nameDiv = document.createElement('div');
+      nameDiv.className = 'line dim';
+      nameDiv.textContent = '  ' + cells.map(c => center(c.name, c.w)).join('');
+      termEl.appendChild(nameDiv);
+
+      const arrowDiv = document.createElement('div');
+      arrowDiv.className = 'line';
+      arrowDiv.appendChild(document.createTextNode('  '));
+      cells.forEach(c => {
+        const span = document.createElement('span');
+        if (c.cls) span.className = c.cls;
+        span.textContent = c.arrow;
+        arrowDiv.appendChild(span);
+      });
+      termEl.appendChild(arrowDiv);
+
+      const bpDiv = document.createElement('div');
+      bpDiv.className = 'line dim';
+      bpDiv.textContent = '  ' + cells.map(c => center(c.bp, c.w)).join('');
+      termEl.appendChild(bpDiv);
+
+      termEl.scrollTop = termEl.scrollHeight;
+    }
+
     // ── UI refresh helpers ──────────────────────────────────────────
     function truncName(name, max) {
       return name.length > max ? name.substring(0, max - 1) + '…' : name;
@@ -299,7 +395,7 @@
     }
 
     function updatePrompt() {
-      const parts = ['genbit'];
+      const parts = ['deoxyer'];
       if (state.activeProject) parts.push(truncName(state.activeProject.name, 20));
       if (state.activeConstruct) parts.push(truncName(state.activeConstruct.name, 20));
       document.querySelector('#input-area .prompt').textContent = parts.join('/') + '>';
@@ -405,7 +501,7 @@
           'organism codons <tax_id>                  Get codon usage table',
         ],
         optimize: [
-          'optimize <name|accession> --organism=<tax_id>',
+          'optimize <name|accession> <tax_id>',
           '  Accepts a workspace name or protein accession.',
           '  Auto-fetches protein if not in workspace.',
           '  Result saved as <name>-opt.',
@@ -415,8 +511,12 @@
           '  [--name=X] [--seq]',
         ],
         kozak: [
-          'kozak <tax_id> [--start=ATG]              Generate & save Kozak',
+          'kozak <tax_id|clade> [--start=ATG]        Generate & save Kozak',
           '  [--name=X]',
+          'kozak list                                 List clade aliases',
+          '',
+          '  Clades: vertebrate, plant, fly, yeast, algae, slimemold,',
+          '          ciliate, malaria, toxoplasma, trypanosome, ecoli',
         ],
         promoter: [
           'promoter search <organism> [--gene=X]     Search promoters',
@@ -434,6 +534,7 @@
           'project use <id>                           Set active project',
           'project get [id]                           Get project details',
           'project update [id] [--name=X] [--desc=X]',
+          'project rename [id] <new_name>             Rename project',
           'project delete [id]                        Delete project',
           '',
           '  Omit [id] to use the active project.',
@@ -446,19 +547,25 @@
           '  [--as=promoter|kozak|cds|terminator|tag|utr|custom]',
           '  [--position=N]',
           'construct get [id]                         Show construct elements',
+          'construct rename [id] <new_name>           Rename construct',
+          'construct element rename <pos> <new_label> Rename element in active construct',
           'construct delete [id]                      Delete construct',
           'construct assemble [id] [--seq]            Assemble full sequence',
+          'construct export [id] [--format=genbank]   Download .gb for Benchling',
+          'construct digest [id] <enz1> [enz2 ...]    Restriction digest (e.g. EcoRI BamHI)',
           '',
           '  Omit [id] to use the active construct.',
         ],
         workspace: [
           'ws                                        List workspace objects',
           'ws add <name> <sequence>                   Add raw sequence to workspace',
-          '  [--type=promoter|cds|terminator|custom]',
+          '  [--type=promoter|cds|terminator|protein|custom]',
           'show <name>                               Show sequence of object',
           'show <name> --info                        Show all metadata',
           'rm <name>                                 Remove from workspace',
           'rename <old> <new>                        Rename workspace object',
+          'rename construct <new_name>               Rename the active construct',
+          'rename project <new_name>                 Rename the active project',
         ],
       };
 
@@ -476,7 +583,7 @@
         return;
       }
 
-      print('GenBit Terminal — Synthetic Biology Construct Designer', 'bold');
+      print('Deoxyer Terminal — Synthetic Biology Construct Designer', 'bold');
       print('');
       print('Commands:', 'info');
       print('  health                     Check API status');
@@ -637,12 +744,14 @@
 
     async function handleOptimize(args, flags) {
       const ref = args[0];
-      if (!ref || !flags.organism) {
-        print('Usage: optimize <name|accession> --organism=<tax_id>', 'warn');
+      const organism = flags.organism || args[1];
+      if (!ref || !organism) {
+        print('Usage: optimize <name|accession> <tax_id>', 'warn');
         print('');
         print('Required:', 'info');
         print('  <name|accession>     Workspace name or UniProt accession (e.g. P04637)');
-        print('  --organism=<tax_id>  Target organism tax ID (e.g. 9606=human, 4932=yeast)');
+        print('  <tax_id>             Target organism tax ID (e.g. 9606=human, 4932=yeast)');
+        print('                       Also accepts --organism=<tax_id>');
         print('');
         print('Optional:', 'info');
         print('  --strategy=<s>       Optimization strategy:');
@@ -657,7 +766,7 @@
         print('  --name=<X>           Custom name for result (default: <input>-opt)');
         print('  --seq                Print the optimized sequence');
         print('');
-        print('Example: optimize P04637 --organism=9606 --strategy=frequency --avoid=EcoRI,BamHI', 'dim');
+        print('Example: optimize P04637 9606 --strategy=frequency --avoid=EcoRI,BamHI', 'dim');
         return;
       }
 
@@ -698,7 +807,7 @@
 
       const body = {
         sequence: proteinSeq,
-        organism_tax_id: parseInt(flags.organism),
+        organism_tax_id: parseInt(organism),
         strategy: flags.strategy || 'frequency',
         avoid_restriction_sites: flags.avoid ? flags.avoid.split(',') : [],
         avoid_repeats: flags['allow-repeats'] !== undefined ? false : true,
@@ -716,7 +825,7 @@
         sequence: optSeq,
         length: optSeq.length,
         source: 'optimized',
-        label: `${sourceName} optimized for ${flags.organism}`,
+        label: `${sourceName} optimized for ${organism}`,
         cai_before: data.cai_before,
         cai_after: data.cai_after,
         gc_content: data.gc_content,
@@ -739,15 +848,30 @@
     }
 
     async function handleKozak(args, flags) {
-      const taxId = args[0];
-      if (!taxId) { print('Usage: kozak <tax_id> [--start=ATG] [--name=X]', 'warn'); return; }
-      const body = {
-        organism_tax_id: parseInt(taxId),
-        start_codon: flags.start || 'ATG',
-      };
+      const arg = args[0];
+      if (!arg) {
+        print('Usage: kozak <tax_id|clade> [--start=ATG] [--name=X]', 'warn');
+        print('  Clade aliases: vertebrate, plant, fly, yeast, algae, slimemold,', 'dim');
+        print('                 ciliate, malaria, toxoplasma, trypanosome, ecoli', 'dim');
+        return;
+      }
+      if (arg === 'list') {
+        const data = await api('GET', '/api/regulatory/kozak/clades');
+        if (flags.json) { printJson(data); return; }
+        print('Available Kozak clades:', 'info');
+        data.clades.forEach(c => print('  ' + c));
+        return;
+      }
+      const isTaxId = /^\d+$/.test(arg);
+      const body = { start_codon: flags.start || 'ATG' };
+      if (isTaxId) {
+        body.organism_tax_id = parseInt(arg);
+      } else {
+        body.clade = arg.toLowerCase();
+      }
       const data = await api('POST', '/api/regulatory/kozak', body);
 
-      const name = flags.name || `kozak-${taxId}`;
+      const name = flags.name || `kozak-${arg}`;
       const kozakObj = {
         type: 'kozak',
         sequence: data.sequence,
@@ -885,7 +1009,22 @@
         if (flags.name) body.name = flags.name;
         if (flags.desc) body.description = flags.desc;
         const data = await api('PUT', `/api/projects/${id}`, body);
+        if (state.activeProject && state.activeProject.id === id && flags.name) {
+          state.activeProject.name = flags.name;
+          refreshUI();
+        }
         print('Updated.', 'success');
+      } else if (verb === 'rename') {
+        const hasId = args[2] !== undefined;
+        const id = hasId ? args[1] : (state.activeProject && state.activeProject.id);
+        const newName = hasId ? args[2] : args[1];
+        if (!id || !newName) { print('Usage: project rename [id] <new_name>', 'warn'); return; }
+        await api('PUT', `/api/projects/${id}`, { name: newName });
+        if (state.activeProject && state.activeProject.id === id) {
+          state.activeProject.name = newName;
+          refreshUI();
+        }
+        print(`Renamed to '${newName}'.`, 'success');
       } else if (verb === 'delete') {
         const id = args[1] || (state.activeProject && state.activeProject.id);
         if (!id) { print('Usage: project delete [id]', 'warn'); return; }
@@ -900,7 +1039,7 @@
           }
         };
       } else {
-        print('Usage: project list|create|use|get|update|delete ...', 'warn');
+        print('Usage: project list|create|use|get|update|rename|delete ...', 'warn');
       }
     }
 
@@ -964,63 +1103,76 @@
         print(`Created construct: ${data.id}`, 'success');
         print(`Name: ${data.name}`, 'info');
         print(`Active construct set to '${data.name}'`, 'dim');
-        print(`Next: construct add <workspace_name> --as=cds|promoter|...`, 'dim');
+        print(`Next: construct add <workspace_name> [<workspace_name> ...] (types inferred from workspace objects)`, 'dim');
       } else if (verb === 'use') {
         if (!args[1]) { print('Usage: construct use <id>', 'warn'); return; }
         const data = await useConstruct(args[1]);
         if (flags.json) { printJson({ active_construct: state.activeConstruct }); return; }
         print(`Active construct: ${data.name} (${data.id})`, 'success');
       } else if (verb === 'add') {
-        // If only one arg after 'add', treat it as wsName using active construct
-        let constructId, wsName;
-        if (args[2]) {
+        // Supports: construct add <ws1> [ws2 ws3 ...]            (active construct)
+        //           construct add <construct_id> <ws1> [ws2 ...] (explicit construct)
+        // Disambiguation: treat args[1] as an explicit construct_id only when it
+        // looks like a UUID. Otherwise everything from args[1] onward is ws names.
+        const UUID_RE = /^[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}$/i;
+        let constructId, wsNames;
+        if (args[1] && UUID_RE.test(args[1])) {
           constructId = args[1];
-          wsName = args[2];
+          wsNames = args.slice(2);
         } else if (args[1]) {
           constructId = state.activeConstruct && state.activeConstruct.id;
-          wsName = args[1];
+          wsNames = args.slice(1);
         }
-        if (!constructId || !wsName) {
-          print('Usage: construct add [construct_id] <workspace_name> [--as=type] [--position=N]', 'warn');
+        if (!constructId || !wsNames || wsNames.length === 0) {
+          print('Usage: construct add [construct_id] <workspace_name> [<workspace_name> ...] [--as=type] [--position=N]', 'warn');
           if (!constructId) print('No active construct. Use "construct use <id>" or pass the construct ID.', 'dim');
           return;
         }
-        const wsObj = wsGet(wsName);
-        if (!wsObj) {
-          print(`'${wsName}' not found in workspace. Use 'ws' to list available objects.`, 'error');
-          return;
+
+        // Resolve each workspace object up front so we fail fast on missing names
+        const wsObjs = [];
+        for (const name of wsNames) {
+          const obj = wsGet(name);
+          if (!obj) {
+            print(`'${name}' not found in workspace. Use 'ws' to list available objects.`, 'error');
+            return;
+          }
+          wsObjs.push({ name, obj });
         }
 
-        // Infer element type from workspace object type, or use --as override
+        // Infer element type from each workspace object type, or use --as override
         const typeMap = {
           'promoter': 'promoter',
+          'terminator': 'terminator',
           'kozak': 'kozak',
+          'cds': 'cds',
           'dna': 'cds',
           'protein': 'cds',
         };
-        const elementType = flags.as || typeMap[wsObj.type] || 'custom';
+        const resolveType = (obj) => flags.as || typeMap[obj.type] || 'custom';
 
-        // Fetch current construct to determine next position and existing elements
+        // Fetch current construct and determine starting insertion position
         const current = await api('GET', `/api/constructs/${constructId}`);
         const existingElements = current.elements || [];
-        const nextPos = flags.position != null ? parseInt(flags.position) : existingElements.length;
+        const startPos = flags.position != null ? parseInt(flags.position) : existingElements.length;
+        const count = wsObjs.length;
 
-        // Build updated element list
-        const newElement = {
-          element_type: elementType,
-          label: wsName,
-          sequence: wsObj.sequence,
-          position: nextPos,
-        };
-
-        // If inserting at a specific position, shift existing elements
+        // Shift existing elements at/after the insertion point by `count`
         const updatedElements = existingElements.map(el => ({
           element_type: el.element_type,
           label: el.label,
           sequence: el.sequence,
-          position: el.position >= nextPos ? el.position + 1 : el.position,
+          position: el.position >= startPos ? el.position + count : el.position,
         }));
-        updatedElements.push(newElement);
+
+        // Append new elements in order starting at startPos
+        const newElements = wsObjs.map(({ name, obj }, i) => ({
+          element_type: resolveType(obj),
+          label: name,
+          sequence: obj.sequence,
+          position: startPos + i,
+        }));
+        updatedElements.push(...newElements);
         updatedElements.sort((a, b) => a.position - b.position);
 
         await api('PUT', `/api/constructs/${constructId}`, { elements: updatedElements });
@@ -1029,7 +1181,10 @@
           printJson(freshJson);
           return;
         }
-        print(`Added '${wsName}' as ${elementType} at position ${nextPos} (${wsObj.length} ${wsUnit(wsObj.type)})`, 'success');
+        newElements.forEach((ne, i) => {
+          const { name, obj } = wsObjs[i];
+          print(`Added '${name}' as ${ne.element_type} at position ${ne.position} (${obj.length} ${wsUnit(obj.type)})`, 'success');
+        });
         const fresh = await api('GET', `/api/constructs/${constructId}`);
         printConstructElements(fresh);
 
@@ -1045,6 +1200,33 @@
           printConstructElements(data);
         } else {
           print('No elements yet. Use "construct add <workspace_name>" to add elements.', 'dim');
+        }
+      } else if (verb === 'rename') {
+        const hasId = args[2] !== undefined;
+        const id = hasId ? args[1] : (state.activeConstruct && state.activeConstruct.id);
+        const newName = hasId ? args[2] : args[1];
+        if (!id || !newName) { print('Usage: construct rename [id] <new_name>', 'warn'); return; }
+        await api('PUT', `/api/constructs/${id}`, { name: newName });
+        if (state.activeConstruct && state.activeConstruct.id === id) {
+          state.activeConstruct.name = newName;
+          refreshUI();
+        }
+        print(`Renamed to '${newName}'.`, 'success');
+      } else if (verb === 'element') {
+        const sub = args[1];
+        if (sub === 'rename') {
+          const position = parseInt(args[2], 10);
+          const newLabel = args.slice(3).join(' ');
+          if (!position || !newLabel) {
+            print('Usage: construct element rename <position> <new_label>', 'warn');
+            return;
+          }
+          const constructId = state.activeConstruct && state.activeConstruct.id;
+          if (!constructId) { print('No active construct. Use "construct use <id>" first.', 'warn'); return; }
+          await api('PATCH', `/api/constructs/${constructId}/elements/${position}`, { label: newLabel });
+          print(`Renamed element at position ${position} to '${newLabel}'.`, 'success');
+        } else {
+          print('Usage: construct element rename <position> <new_label>', 'warn');
         }
       } else if (verb === 'delete') {
         const id = args[1] || (state.activeConstruct && state.activeConstruct.id);
@@ -1071,6 +1253,9 @@
           print('');
           print('Annotations:', 'info');
           printTable(data.annotations, ['label', 'type', 'start', 'end', 'length']);
+          print('');
+          print('Diagram:', 'info');
+          printConstructDiagram(data.annotations);
         }
         if (data.warnings && data.warnings.length) {
           print('');
@@ -1080,8 +1265,86 @@
           print('');
           printCodons(data.full_sequence, 'Assembled sequence', data.annotations);
         }
+      } else if (verb === 'export') {
+        const id = args[1] || (state.activeConstruct && state.activeConstruct.id);
+        if (!id) { print('Usage: construct export [id] [--format=genbank]', 'warn'); return; }
+        const format = flags.format || 'genbank';
+        const url = `${state.baseUrl}/api/constructs/${encodeURIComponent(id)}/export?format=${encodeURIComponent(format)}`;
+        let resp;
+        try {
+          resp = await fetch(url, { headers: { 'X-Session-ID': state.sessionId } });
+        } catch (e) {
+          print(`Connection failed. Is the backend running at ${state.baseUrl}?`, 'error');
+          return;
+        }
+        if (!resp.ok) {
+          const data = await resp.json().catch(() => null);
+          const raw = data?.detail || `HTTP ${resp.status}`;
+          print(typeof raw === 'string' ? raw : JSON.stringify(raw), 'error');
+          return;
+        }
+        const blob = await resp.blob();
+        const cd = resp.headers.get('Content-Disposition') || '';
+        const match = cd.match(/filename="([^"]+)"/);
+        const filename = match ? match[1] : `${id}.gb`;
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(a.href);
+        print(`Exported ${filename} (${blob.size} bytes). Import into Benchling via "Create → Import DNA/RNA Sequences".`, 'success');
+      } else if (verb === 'digest') {
+        // construct digest [id] <enzyme1> [enzyme2 ...]
+        const UUID_RE = /^[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}$/i;
+        let id, enzymes;
+        if (args[1] && UUID_RE.test(args[1])) {
+          id = args[1];
+          enzymes = args.slice(2);
+        } else {
+          id = state.activeConstruct && state.activeConstruct.id;
+          enzymes = args.slice(1);
+        }
+        if (!id || enzymes.length === 0) {
+          print('Usage: construct digest [id] <enzyme1> [enzyme2 ...]', 'warn');
+          if (!id) print('No active construct. Use "construct use <id>" or pass the construct ID.', 'dim');
+          return;
+        }
+        const data = await api('POST', `/api/constructs/${id}/digest`, { enzymes });
+        if (flags.json) { printJson(data); return; }
+        print(`Sequence length: ${data.sequence_length} bp`, 'info');
+        print('');
+        print('Enzymes:', 'info');
+        printTable(
+          data.enzymes.map(e => ({
+            name: e.name,
+            site: e.site,
+            overhang: e.overhang,
+            cuts: e.cut_count,
+            positions: e.cut_positions.join(', ') || '—',
+            features: e.feature_hits.join(', ') || '—',
+          })),
+          ['name', 'site', 'overhang', 'cuts', 'positions', 'features']
+        );
+        print('');
+        print(`Fragments (${data.fragments.length}):`, 'info');
+        printTable(
+          data.fragments.map(f => ({
+            '#': f.index,
+            start: f.start,
+            end: f.end,
+            length: f.length,
+            sequence: f.sequence,
+          })),
+          ['#', 'start', 'end', 'length', 'sequence']
+        );
+        if (data.warnings && data.warnings.length) {
+          print('');
+          data.warnings.forEach(w => print('Warning: ' + w, 'warn'));
+        }
       } else {
-        print('Usage: construct list|create|add|get|delete|assemble ...', 'warn');
+        print('Usage: construct list|create|use|add|get|rename|element|delete|assemble|export|digest ...', 'warn');
       }
     }
 
@@ -1092,18 +1355,37 @@
         const name = args[1];
         const seq = args.slice(2).join('');
         if (!name || !seq) {
-          print('Usage: ws add <name> <sequence> [--type=promoter|cds|terminator|custom]', 'warn');
+          print('Usage: ws add <name> <sequence> [--type=promoter|cds|terminator|protein|custom]', 'warn');
+          return;
+        }
+        const rawType = (flags.type || 'custom').toLowerCase();
+        const proteinAliases = ['protein', 'aa', 'amino-acid', 'amino_acid', 'aminoacid'];
+        const isProtein = proteinAliases.includes(rawType);
+        const upper = seq.toUpperCase();
+        if (isProtein) {
+          if (!/^[ACDEFGHIKLMNPQRSTVWYBXZUO*]+$/.test(upper)) {
+            print('Protein sequence must contain only IUPAC amino acid letters.', 'error');
+            return;
+          }
+          wsStore(name, {
+            type: 'protein',
+            sequence: upper,
+            length: upper.length,
+            source: 'manual',
+            label: name,
+          });
+          print(`Saved '${name}' as protein (${upper.length} aa)`, 'success');
           return;
         }
         if (!/^[ATCGatcg]+$/.test(seq)) {
           print('Sequence must contain only A, T, C, G characters.', 'error');
           return;
         }
-        const seqType = flags.type || 'custom';
+        const seqType = rawType;
         wsStore(name, {
           type: seqType === 'cds' || seqType === 'promoter' || seqType === 'terminator' ? seqType : 'dna',
-          sequence: seq.toUpperCase(),
-          length: seq.length,
+          sequence: upper,
+          length: upper.length,
           source: 'manual',
           label: name,
         });
@@ -1175,21 +1457,42 @@
       refreshUI();
     }
 
-    function handleRename(args) {
+    async function handleRename(args) {
       const [oldName, newName] = args;
-      if (!oldName || !newName) { print('Usage: rename <old> <new>', 'warn'); return; }
-      if (!wsGet(oldName)) {
-        print(`'${oldName}' not found in workspace.`, 'error');
+      if (!oldName || !newName) {
+        print('Usage: rename <old> <new>  |  rename construct <new>  |  rename project <new>', 'warn');
         return;
       }
-      if (wsGet(newName)) {
-        print(`'${newName}' already exists in workspace. Remove it first or choose a different name.`, 'error');
+      if (wsGet(oldName)) {
+        if (wsGet(newName)) {
+          print(`'${newName}' already exists in workspace. Remove it first or choose a different name.`, 'error');
+          return;
+        }
+        state.workspace[newName] = state.workspace[oldName];
+        delete state.workspace[oldName];
+        print(`Renamed '${oldName}' → '${newName}'`, 'success');
+        refreshUI();
         return;
       }
-      state.workspace[newName] = state.workspace[oldName];
-      delete state.workspace[oldName];
-      print(`Renamed '${oldName}' → '${newName}'`, 'success');
-      refreshUI();
+      if (oldName === 'construct') {
+        if (!state.activeConstruct) { print('No active construct. Use "construct use <id>" first.', 'warn'); return; }
+        const id = state.activeConstruct.id;
+        await api('PUT', `/api/constructs/${id}`, { name: newName });
+        state.activeConstruct.name = newName;
+        refreshUI();
+        print(`Renamed construct → '${newName}'`, 'success');
+        return;
+      }
+      if (oldName === 'project') {
+        if (!state.activeProject) { print('No active project. Use "project use <id>" first.', 'warn'); return; }
+        const id = state.activeProject.id;
+        await api('PUT', `/api/projects/${id}`, { name: newName });
+        state.activeProject.name = newName;
+        refreshUI();
+        print(`Renamed project → '${newName}'`, 'success');
+        return;
+      }
+      print(`'${oldName}' not found in workspace.`, 'error');
     }
 
     // ── Navigation helpers ──────────────────────────────────────────
@@ -1402,7 +1705,7 @@
 
     // ── Startup banner ──────────────────────────────────────────────
     print('╔══════════════════════════════════════════╗', 'info');
-    print('║          Deoxyer Terminal v0.3           ║', 'info');
+    print('║          Deoxyer Terminal v0.9           ║', 'info');
     print('║  Synthetic Biology Construct Designer    ║', 'info');
     print('╚══════════════════════════════════════════╝', 'info');
     print('');

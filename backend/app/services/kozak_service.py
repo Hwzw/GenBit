@@ -39,6 +39,67 @@ def _load_kozak_data() -> list[dict]:
     return _KOZAK_DATA
 
 
+# Map short clade aliases (typed by the user) to CSV organism names.
+# `None` means the alias resolves to a non-Kozak system (Shine-Dalgarno).
+_CLADE_ALIASES: dict[str, str | None] = {
+    "vertebrate": "Vertebrate",
+    "vertebrates": "Vertebrate",
+    "mammal": "Vertebrate",
+    "mammals": "Vertebrate",
+    "human": "Vertebrate",
+    "mouse": "Vertebrate",
+    "rat": "Vertebrate",
+    "fish": "Vertebrate",
+    "zebrafish": "Vertebrate",
+    "bird": "Vertebrate",
+    "chicken": "Vertebrate",
+    "fly": "Fruit fly",
+    "flies": "Fruit fly",
+    "drosophila": "Fruit fly",
+    "insect": "Fruit fly",
+    "yeast": "Budding yeast",
+    "scerevisiae": "Budding yeast",
+    "cerevisiae": "Budding yeast",
+    "klactis": "Budding yeast",
+    "fungus": "Budding yeast",
+    "fungi": "Budding yeast",
+    "plant": "Terrestrial plants",
+    "plants": "Terrestrial plants",
+    "arabidopsis": "Terrestrial plants",
+    "maize": "Terrestrial plants",
+    "rice": "Terrestrial plants",
+    "wheat": "Terrestrial plants",
+    "embryophyte": "Terrestrial plants",
+    "algae": "Microalga",
+    "alga": "Microalga",
+    "chlamydomonas": "Microalga",
+    "greenalgae": "Microalga",
+    "slimemold": "Slime mold",
+    "dictyostelium": "Slime mold",
+    "ciliate": "Ciliate",
+    "paramecium": "Ciliate",
+    "tetrahymena": "Ciliate",
+    "malaria": "Malarial",
+    "malarial": "Malarial",
+    "plasmodium": "Malarial",
+    "toxoplasma": "Toxoplasma",
+    "trypanosome": "Trypanosomatidae",
+    "trypanosoma": "Trypanosomatidae",
+    "leishmania": "Trypanosomatidae",
+    "kinetoplastid": "Trypanosomatidae",
+    # Prokaryotes use Shine-Dalgarno, not a Kozak sequence.
+    "ecoli": None,
+    "bacteria": None,
+    "bacterium": None,
+    "prokaryote": None,
+    "prokaryotic": None,
+}
+
+
+def _normalize_clade(name: str) -> str:
+    return "".join(c for c in name.lower() if c.isalnum())
+
+
 # Map common tax IDs to CSV organism names for lookup
 _TAX_ID_MAP = {
     # Vertebrates
@@ -72,8 +133,21 @@ _TAX_ID_MAP = {
     # Trypanosomatidae
     5691: "Trypanosomatidae",  # Trypanosoma
     5660: "Trypanosomatidae",  # Leishmania
-    # E. coli — uses Shine-Dalgarno, not Kozak
-    562: None,
+    # Prokaryotes — use Shine-Dalgarno, not Kozak
+    562: None,       # E. coli
+    83333: None,     # E. coli K-12 (strain-level)
+    1423: None,      # Bacillus subtilis
+    287: None,       # Pseudomonas aeruginosa
+    1358: None,      # Lactococcus lactis
+    1773: None,      # Mycobacterium tuberculosis
+    1902: None,      # Streptomyces coelicolor
+    1718: None,      # Corynebacterium glutamicum
+    1148: None,      # Synechocystis sp. PCC 6803
+    # Archaea — use SD-like ribosome binding; SD consensus is a reasonable approximation
+    2190: None,      # Methanocaldococcus jannaschii
+    2287: None,      # Saccharolobus solfataricus
+    2246: None,      # Haloferax volcanii
+    64091: None,     # Halobacterium salinarum NRC-1
 }
 
 
@@ -104,25 +178,64 @@ _SHINE_DALGARNO = {
 }
 
 
-def generate_kozak(organism_tax_id: int, start_codon: str = "ATG") -> dict:
+def _shine_dalgarno_result(start_codon: str, organism_tax_id: int | None = None) -> dict:
+    sequence = _SHINE_DALGARNO["consensus"]
+    if start_codon != "ATG":
+        idx = sequence.rfind("ATG")
+        if idx >= 0:
+            sequence = sequence[:idx] + start_codon + sequence[idx + 3:]
+    return {
+        "organism_tax_id": organism_tax_id,
+        "organism": _SHINE_DALGARNO["organism"],
+        "consensus": _SHINE_DALGARNO["consensus"],
+        "sequence": sequence,
+        "notes": _SHINE_DALGARNO["notes"],
+    }
+
+
+def list_clades() -> list[str]:
+    """Return the canonical clade aliases users can pass to `generate_kozak`."""
+    return [
+        "vertebrate", "fly", "yeast", "plant", "algae",
+        "slimemold", "ciliate", "malaria", "toxoplasma",
+        "trypanosome", "ecoli",
+    ]
+
+
+def generate_kozak(
+    organism_tax_id: int | None = None,
+    start_codon: str = "ATG",
+    clade: str | None = None,
+) -> dict:
     """Generate appropriate Kozak/initiation sequence for target organism.
 
+    Accepts either an NCBI tax ID or a clade alias (e.g. "plant", "vertebrate").
     Returns dict with consensus, sequence, organism info, and notes.
     """
-    # E. coli and other prokaryotes use Shine-Dalgarno
-    if organism_tax_id == 562:
-        sequence = _SHINE_DALGARNO["consensus"]
-        if start_codon != "ATG":
-            idx = sequence.rfind("ATG")
-            if idx >= 0:
-                sequence = sequence[:idx] + start_codon + sequence[idx + 3:]
-        return {
-            "organism_tax_id": organism_tax_id,
-            "organism": _SHINE_DALGARNO["organism"],
-            "consensus": _SHINE_DALGARNO["consensus"],
-            "sequence": sequence,
-            "notes": _SHINE_DALGARNO["notes"],
-        }
+    if clade:
+        key = _normalize_clade(clade)
+        if key not in _CLADE_ALIASES:
+            valid = ", ".join(list_clades())
+            raise ValueError(f"Unknown clade '{clade}'. Try one of: {valid}")
+
+        search_term = _CLADE_ALIASES[key]
+        if search_term is None:
+            return _shine_dalgarno_result(start_codon)
+
+        entry = next(
+            (e for e in _load_kozak_data() if search_term.lower() in e["organism"].lower()),
+            None,
+        )
+        if entry is None:
+            raise ValueError(f"Clade '{clade}' has no Kozak entry in the database")
+        return _build_result(entry, start_codon, organism_tax_id=None)
+
+    if organism_tax_id is None:
+        raise ValueError("Must provide either organism_tax_id or clade")
+
+    # Prokaryotes (bacteria + archaea) use Shine-Dalgarno
+    if organism_tax_id in _TAX_ID_MAP and _TAX_ID_MAP[organism_tax_id] is None:
+        return _shine_dalgarno_result(start_codon, organism_tax_id=organism_tax_id)
 
     entry = _find_kozak_entry(organism_tax_id)
     if not entry:
@@ -132,9 +245,13 @@ def generate_kozak(organism_tax_id: int, start_codon: str = "ATG") -> dict:
             "organism": "Unknown (defaulting to vertebrate)",
             "consensus": "GCCACCATGG",
             "sequence": "GCCACCATGG" if start_codon == "ATG" else "GCCACC" + start_codon + "G",
-            "notes": "Default vertebrate Kozak (organism not in database)",
+            "notes": "Default vertebrate Kozak — pass a clade (e.g. 'kozak plant') to override",
         }
 
+    return _build_result(entry, start_codon, organism_tax_id=organism_tax_id)
+
+
+def _build_result(entry: dict, start_codon: str, organism_tax_id: int | None) -> dict:
     consensus = entry["consensus"]
     # Use the first concrete combination as the sequence
     if entry["combinations"]:

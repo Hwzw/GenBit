@@ -22,21 +22,14 @@ from app.utils.sequence import gc_content, reverse_translate
 STOP_CODONS = ["TAA", "TAG", "TGA"]
 
 
-def _select_stop_codons(codon_table: dict) -> str:
+def select_stop_codons(codon_table: dict) -> str:
     """Select 2-3 tandem stop codons for reliable translation termination.
 
     Uses the organism's codon usage to pick the preferred stop codon first,
     then appends a different stop codon for read-through protection.
     """
-    # Get stop codon frequencies from the codon table (keyed under '*')
-    stop_freqs = {}
-    if "*" in codon_table:
-        stop_freqs = codon_table["*"]
-
-    # Sort stop codons by usage frequency (most preferred first)
+    stop_freqs = codon_table.get("*", {}) if codon_table else {}
     ranked = sorted(STOP_CODONS, key=lambda c: stop_freqs.get(c, 0), reverse=True)
-
-    # Use preferred stop + a different backup + a third for safety
     return ranked[0] + ranked[1] + ranked[2]
 
 
@@ -90,12 +83,9 @@ def optimize_sequence(
 
     optimized_dna = problem.sequence
 
-    # Step 4: Append tandem stop codons for reliable termination
-    # Use two different stop codons to guard against read-through
-    stop_codons = _select_stop_codons(codon_table.table)
-    optimized_dna += stop_codons
+    # Stop codons are emitted at construct-assembly time so multi-CDS
+    # constructs get a single stop block after the last CDS, not internal stops.
 
-    # Step 5: Calculate metrics
     gc_before = gc_content(initial_dna)
     gc_after = gc_content(optimized_dna)
 

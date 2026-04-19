@@ -39,7 +39,8 @@ class TerminatorSearchResult(BaseModel):
 
 
 class KozakConfig(BaseModel):
-    organism_tax_id: int
+    organism_tax_id: int | None = None
+    clade: str | None = None  # e.g. "plant", "vertebrate", "yeast"
     start_codon: str = "ATG"
     custom_context: str | None = None  # override default Kozak for organism
 

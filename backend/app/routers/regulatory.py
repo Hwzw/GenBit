@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.dependencies import get_session_id
 from app.schemas.regulatory import KozakConfig, KozakResult, PromoterSearchResult, TerminatorSearchResult
@@ -38,13 +38,27 @@ async def get_terminator(terminator_id: str, session_id: str = Depends(get_sessi
 
 @router.post("/kozak", response_model=KozakResult)
 async def generate_kozak(config: KozakConfig):
-    result = kozak_service.generate_kozak(
-        organism_tax_id=config.organism_tax_id,
-        start_codon=config.start_codon,
-    )
+    if config.organism_tax_id is None and not config.clade:
+        raise HTTPException(
+            status_code=422,
+            detail="Provide either organism_tax_id or clade",
+        )
+    try:
+        result = kozak_service.generate_kozak(
+            organism_tax_id=config.organism_tax_id,
+            start_codon=config.start_codon,
+            clade=config.clade,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
     return KozakResult(
         organism=result["organism"],
         consensus=result["consensus"],
         sequence=result["sequence"],
         notes=result["notes"],
     )
+
+
+@router.get("/kozak/clades")
+async def list_kozak_clades():
+    return {"clades": kozak_service.list_clades()}
