@@ -1,18 +1,21 @@
 # Deoxyer
 
-Synthetic biology construct designer for heterologous protein expression. Look up source sequences, optimize codons for a target host, assemble promoter → Kozak → CDS → terminator constructs, run *in silico* restriction digests, and export to GenBank — all from a text-based terminal UI in the browser.
+Synthetic biology construct designer for heterologous protein expression. Look up source sequences, optimize codons for a target host, drop in tags / linkers / selection markers, assemble promoter → Kozak → CDS → terminator constructs, run *in silico* restriction digests, and export to GenBank — all from a text-based terminal UI in the browser.
 
 ## Features
 
-- **Gene & Protein Lookup** — Search NCBI Gene, NCBI Protein, and UniProt; pull CDS, mRNA, or protein sequences into your workspace
+- **Gene & Protein Lookup** — Search NCBI Gene, NCBI Protein, and UniProt; pull CDS, mRNA, or protein sequences into your workspace. `protein get` and `misc get` accept multiple accessions in one call so you can batch-fetch a whole panel
 - **Organism Selection** — Search NCBI Taxonomy and fetch organism-specific codon usage tables (CoCoPUTs + python-codon-tables fallback)
-- **Codon Optimization** — DNAchisel-backed `frequency`, `harmonized`, and `balanced` strategies with GC-window and restriction-site avoidance constraints; CAI before/after and GC content reported
+- **Codon Optimization** — DNAchisel-backed `frequency`, `harmonized`, and `balanced` strategies with GC-window and restriction-site avoidance constraints; CAI before/after and GC content reported. `optimize` also accepts multiple proteins in one call — optimize a whole CDS panel for the same host in a single command
 - **Kozak Generation** — Clade-aware translation initiation contexts (vertebrate, plant, fly, yeast, algae, slimemold, ciliate, malaria, toxoplasma, trypanosome, E. coli) resolved by tax ID or clade alias
 - **Promoter & Terminator Browsing** — Curated synthetic promoters (CMV, EF1α, GAL1, CaMV 35S, …) plus EPD search, and transcription terminators for bacterial, yeast, mammalian, plant, and fungal hosts (B0015, SV40 poly-A, CYC1, NOS, …)
+- **Miscellaneous Sequence Library** — Search / fetch curated protein + DNA elements: purification and detection tags (6×His, 3×FLAG, HA, Myc, V5, Strep-II, SBP, GST, SUMO), 2A self-cleaving peptides (P2A, T2A, E2A, F2A), peptide linkers (rigid, flexible, standard, short/medium/long), localization signals (SV40-NLS, NES, COX-VIII, KDEL), recombination sites (LoxP, FRT), origins of replication (pUC, f1, ColE1), antibiotic resistance ORFs (AmpR, KanR, PuroR, HygroR), insulators (cHS4), MCS, SpyTag/SpyCatcher, WPRE, and more — each tagged as protein or DNA so `optimize` just works on the protein entries
 - **Project & Construct Management** — Organize work into projects and constructs; each construct holds a positional list of typed elements (promoter / kozak / cds / terminator / tag / utr / custom) with editable labels
-- **Construct Assembly** — Concatenate elements in order, emit the full sequence plus per-element annotations and any validation warnings
-- **Restriction Digest** — Pick one or more enzymes; returns cut positions, resulting fragment sizes, and which annotated elements each fragment spans
+- **Construct Assembly** — Concatenate elements in order, emit the full sequence plus per-element annotations and any validation warnings. The rendered sequence is color-coded by element type with per-CDS palettes that distinguish reading frames and adjacent CDSes
+- **Restriction Digest** — Pick one or more enzymes; returns cut positions, resulting fragment sizes, and which annotated elements each fragment spans. With `--seq`, the full sequence is rendered inline with colored cut bars over the element-colored backbone
 - **GenBank Export** — Download an assembled construct as a `.gb` file (ready to drop into Benchling, SnapGene, etc.) with feature annotations and assembly-warning comments preserved
+- **Sequence Slicing** — Pull a named subsequence by coordinate-free markers (`slice myGene ATG...TAA` or `--from=ATG --to=TAA`), with optional reverse-complement fallback for DNA
+- **One-Click Insert Buttons** — Every `ws` row, every search result table (`protein search`, `promoter search`, `terminator search`, `organism search`, `misc search`, `gene search`) gets a leading `+` button that appends that row's id / accession / workspace name to the command line — type `optimize ` or `construct add ` once, then click your way through a panel of rows instead of typing each identifier by hand
 - **Session Isolation** — Every browser tab gets an anonymous session ID stored in `localStorage`; all projects, constructs, and jobs are scoped to that session
 - **Agent-Friendly Output** — A `--json` flag on any command prints structured JSON instead of the formatted view, for scripting and LLM integration
 
@@ -40,9 +43,10 @@ deoxyer/
 │   │   ├── config.py              Pydantic settings
 │   │   ├── dependencies.py        DB + session ID dependencies
 │   │   ├── routers/               health, genes, proteins, organisms,
-│   │   │                          optimization, regulatory, projects, constructs
+│   │   │                          optimization, regulatory, misc, projects,
+│   │   │                          constructs
 │   │   ├── services/              gene, protein, organism, codon_optimization,
-│   │   │                          kozak, promoter, terminator, project,
+│   │   │                          kozak, promoter, terminator, misc, project,
 │   │   │                          construct, construct_assembly,
 │   │   │                          restriction_digest, genbank_export, cache
 │   │   ├── clients/               NCBI, UniProt, Ensembl, CoCoPUTs, EPD, JASPAR
@@ -51,6 +55,8 @@ deoxyer/
 │   │   ├── schemas/               Pydantic request/response schemas
 │   │   ├── utils/                 Sequence tools, CAI, FASTA parsing
 │   │   └── db/                    Async engine and session
+│   ├── data/                      Curated CSVs (promoters, terminators,
+│   │                              misc_sequences: tags, linkers, origins, …)
 │   ├── alembic/                   Database migrations
 │   └── tests/                     Pytest suite
 │
@@ -129,8 +135,7 @@ python -m pytest
 | `gene get <id>` | Gene details |
 | `gene sequence <id> [--type=cds\|mrna] [--name=X] [--seq]` | Fetch sequence, save to workspace |
 | `protein search <query> [--organism=X]` | Search UniProt + NCBI Protein |
-| `protein get <accession>` | Protein details |
-| `protein sequence <accession> [--name=X] [--seq]` | Fetch sequence, save to workspace |
+| `protein get <accession> [<accession> …] [--name=X] [--seq]` | Fetch one or many proteins, save each to workspace |
 | `organism search <query>` | Search NCBI Taxonomy |
 | `organism get <tax_id>` | Organism details |
 | `organism codons <tax_id>` | Codon usage table |
@@ -139,14 +144,16 @@ python -m pytest
 
 | Command | Description |
 |---------|-------------|
-| `optimize <name\|accession> <tax_id>` | Codon-optimize a protein for a host |
-| — flags | `--strategy=frequency\|harmonized\|balanced`, `--gc-min`, `--gc-max`, `--avoid=EcoRI,BamHI`, `--allow-repeats`, `--name`, `--seq` |
+| `optimize <name\|accession> [<name\|accession> …] <tax_id>` | Codon-optimize one or many proteins for a host (last positional arg is tax_id; or use `--organism=<tax_id>` and all positionals are refs) |
+| — flags | `--strategy=frequency\|harmonized\|balanced`, `--gc-min`, `--gc-max`, `--avoid=EcoRI,BamHI`, `--allow-repeats`, `--name` (single ref only), `--seq` |
 | `kozak <tax_id\|clade> [--start=ATG] [--name=X]` | Generate Kozak context |
 | `kozak list` | List clade aliases |
 | `promoter search <organism> [--gene=X]` | Search promoter catalog + EPD |
 | `promoter get <id> [--name=X]` | Fetch promoter, save to workspace |
 | `terminator search <organism>` | Search terminator catalog |
 | `terminator get <id> [--name=X]` | Fetch terminator, save to workspace |
+| `misc search [<query>] [--type=protein\|dna]` | Search tags, linkers, origins, markers, etc. |
+| `misc get <id_or_name> [<id_or_name> …] [--name=X]` | Fetch one or many misc sequences; each saved as `protein` or `dna` per the library's sequence-type annotation |
 
 ### Projects & Constructs
 
@@ -175,9 +182,10 @@ python -m pytest
 
 | Command | Description |
 |---------|-------------|
-| `ws` | List workspace objects |
-| `ws add <name> <sequence> [--type=TYPE]` | Add a raw sequence |
+| `ws` | List workspace objects. Every row has a leading `+` button that appends the object's name to the command line — combine with `optimize `, `construct add `, `show `, etc. |
+| `ws add <name> <sequence> [--type=TYPE]` | Add a raw sequence (TYPE: promoter / cds / terminator / protein / custom) |
 | `show <name>` | Show sequence (add `--info` for metadata) |
+| `slice <name> <START>...<END> [--name=X] [--rc]` | Extract a subsequence by markers (also `--from=...` / `--to=...` flag form). Matching is case-insensitive; `--rc` also searches the reverse complement |
 | `rm <name>` | Remove from workspace |
 | `rename <old> <new>` | Rename workspace object |
 | `rename construct\|project <new_name>` | Rename the active construct / project |
