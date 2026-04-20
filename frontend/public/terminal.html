@@ -495,7 +495,7 @@
           print(`${e.name} (${meta}): No cuts`, 'dim');
           return;
         }
-        print(`${e.name} (${meta}): ${cutCount1} cut${cutCount === 1 ? '' : 's'}`, 'info');
+        print(`${e.name} (${meta}): ${cutCount} cut${cutCount === 1 ? '' : 's'}`, 'info');
 
         const colChar = new Array(totalWidth).fill(' ');
         const colClass = new Array(totalWidth).fill('');
@@ -693,12 +693,12 @@
           '          ciliate, malaria, toxoplasma, trypanosome, ecoli',
         ],
         promoter: [
-          'promoter search <organism> [--gene=X]     Search promoters',
+          'promoter search <organism> [--organism=X] [--gene=X]  Search promoters',
           'promoter get <id>                         Fetch & save to workspace',
           '  [--name=X]',
         ],
         terminator: [
-          'terminator search <organism>              Search terminators',
+          'terminator search <organism> [--organism=X]  Search terminators',
           'terminator get <id>                       Fetch & save to workspace',
           '  [--name=X]',
         ],
@@ -723,7 +723,7 @@
           'construct list [--project=<id>]            List constructs in project',
           'construct create <name> [--project=<id>] [--organism=<tax_id>]',
           'construct use <id>                         Set active construct',
-          'construct add [id] <workspace_name>        Add element from workspace',
+          'construct add [id] <workspace_name> [<workspace_name> ...]  Add element(s) from workspace',
           '  [--as=promoter|kozak|cds|terminator|tag|utr|custom]',
           '  [--position=N]',
           'construct get [id]                         Show construct elements',
@@ -823,7 +823,14 @@
         if (!args[1]) { print('Usage: gene get <gene_id>', 'warn'); return; }
         const data = await api('GET', `/api/genes/${args[1]}`);
         if (flags.json) { printJson(data); return; }
-        printJson(data);
+        print(`Gene ID: ${data.gene_id}`, 'bold');
+        if (data.symbol) print(`Symbol: ${data.symbol}`);
+        if (data.full_name) print(`Full name: ${data.full_name}`);
+        if (data.description) print(`Description: ${data.description}`);
+        if (data.organism) print(`Organism: ${data.organism}${data.tax_id ? ` (tax ${data.tax_id})` : ''}`);
+        if (data.chromosome) print(`Chromosome: ${data.chromosome}`, 'dim');
+        if (data.map_location) print(`Map location: ${data.map_location}`, 'dim');
+        if (data.aliases && data.aliases.length) print(`Aliases: ${data.aliases.join(', ')}`, 'dim');
       } else if (verb === 'sequence') {
         if (!args[1]) { print('Usage: gene sequence <gene_id> [--type=cds|mrna] [--name=X] [--seq]', 'warn'); return; }
         const geneId = args[1];
@@ -926,8 +933,11 @@
         if (!args[1]) { print('Usage: organism get <tax_id>', 'warn'); return; }
         const data = await api('GET', `/api/organisms/${args[1]}`);
         if (flags.json) { printJson(data); return; }
-        printJson(data);
-        return;
+        print(`Tax ID: ${data.tax_id}`, 'bold');
+        if (data.scientific_name) print(`Scientific name: ${data.scientific_name}`);
+        if (data.common_name) print(`Common name: ${data.common_name}`);
+        if (data.gc_content != null) print(`GC content: ${data.gc_content}%`);
+        if (data.lineage) print(`Lineage: ${data.lineage}`, 'dim');
       } else if (verb === 'codons') {
         if (!args[1]) { print('Usage: organism codons <tax_id>', 'warn'); return; }
         const data = await api('GET', `/api/organisms/${args[1]}/codon-table`);
@@ -1306,8 +1316,9 @@
         if (flags.name) body.name = flags.name;
         if (flags.desc) body.description = flags.desc;
         const data = await api('PUT', `/api/projects/${id}`, body);
-        if (state.activeProject && state.activeProject.id === id && flags.name) {
-          state.activeProject.name = flags.name;
+        if (state.activeProject && state.activeProject.id === id) {
+          if (flags.name) state.activeProject.name = flags.name;
+          if (flags.desc) state.activeProject.description = flags.desc;
           refreshUI();
         }
         print('Updated.', 'success');
