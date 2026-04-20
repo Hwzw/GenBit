@@ -83,8 +83,8 @@ brew services start redis
 
 ```bash
 # 1. Clone the repo
-git clone https://github.com/deoxyer/deoxyer.git
-cd deoxyer
+git clone https://github.com/hwzw/Deoxyer.git
+cd Deoxyer
 
 # 2. Create the PostgreSQL user and database
 createuser deoxyer -P         # set a password when prompted
@@ -148,9 +148,9 @@ python -m pytest
 | — flags | `--strategy=frequency\|harmonized\|balanced`, `--gc-min`, `--gc-max`, `--avoid=EcoRI,BamHI`, `--allow-repeats`, `--name` (single ref only), `--seq` |
 | `kozak <tax_id\|clade> [--start=ATG] [--name=X]` | Generate Kozak context |
 | `kozak list` | List clade aliases |
-| `promoter search <organism> [--gene=X]` | Search promoter catalog + EPD |
+| `promoter search <organism> [--organism=X] [--gene=X]` | Search promoter catalog + EPD |
 | `promoter get <id> [--name=X]` | Fetch promoter, save to workspace |
-| `terminator search <organism>` | Search terminator catalog |
+| `terminator search <organism> [--organism=X]` | Search terminator catalog |
 | `terminator get <id> [--name=X]` | Fetch terminator, save to workspace |
 | `misc search [<query>] [--type=protein\|dna]` | Search tags, linkers, origins, markers, etc. |
 | `misc get <id_or_name> [<id_or_name> …] [--name=X]` | Fetch one or many misc sequences; each saved as `protein` or `dna` per the library's sequence-type annotation |
@@ -169,7 +169,7 @@ python -m pytest
 | `construct list [--project=<id>]` | List constructs |
 | `construct create <name> [--project=<id>] [--organism=<tax_id>]` | Create construct |
 | `construct use <id>` | Set active construct |
-| `construct add [id] <workspace_name> [--as=TYPE] [--position=N]` | Add element from workspace (TYPE: promoter / kozak / cds / terminator / tag / utr / custom) |
+| `construct add [id] <workspace_name> [<workspace_name> …] [--as=TYPE] [--position=N]` | Add one or more elements from workspace (TYPE: promoter / kozak / cds / terminator / tag / utr / custom) |
 | `construct get [id]` | Show construct elements |
 | `construct rename [id] <new_name>` | Rename construct |
 | `construct element rename <pos> <new_label>` | Relabel an element in the active construct |
