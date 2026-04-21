@@ -1,3 +1,4 @@
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -7,6 +8,20 @@ class Settings(BaseSettings):
     # Database
     DATABASE_URL: str = "postgresql+asyncpg://genbit:genbit@localhost:5432/genbit"
     REDIS_URL: str = "redis://localhost:6379/0"
+
+    @field_validator("DATABASE_URL", mode="after")
+    @classmethod
+    def _normalize_db_url(cls, v: str) -> str:
+        if v.startswith("postgresql://"):
+            v = "postgresql+asyncpg://" + v[len("postgresql://") :]
+        elif v.startswith("postgres://"):
+            v = "postgresql+asyncpg://" + v[len("postgres://") :]
+        v = (
+            v.replace("sslmode=require", "ssl=require")
+            .replace("sslmode=prefer", "ssl=prefer")
+            .replace("sslmode=disable", "ssl=disable")
+        )
+        return v
 
     # NCBI
     NCBI_API_KEY: str = ""

@@ -124,6 +124,30 @@ cd backend
 python -m pytest
 ```
 
+### Deploy to Railway
+
+The repo ships with a `Dockerfile`, `.dockerignore`, and `railway.json` at the root, so Railway builds and deploys out of the box.
+
+1. Push the repo to GitHub.
+2. On [railway.app](https://railway.app), create a new project → **Deploy from GitHub repo** → select this repo. Railway detects the `Dockerfile` automatically.
+3. In the project, click **New → Database → PostgreSQL**, then again **New → Database → Redis**. Each plugin exposes reference variables.
+4. On the app service, go to **Variables** and add:
+
+   | Variable | Value |
+   |----------|-------|
+   | `DATABASE_URL` | `${{Postgres.DATABASE_URL}}` (auto-normalized to `asyncpg` in `config.py`) |
+   | `REDIS_URL` | `${{Redis.REDIS_URL}}` |
+   | `SECRET_KEY` | generate with `python -c "import secrets; print(secrets.token_urlsafe(32))"` |
+   | `CORS_ORIGINS` | your Railway / custom domain, comma-separated |
+   | `NCBI_API_KEY` | your [NCBI API key](https://www.ncbi.nlm.nih.gov/account/settings/) |
+   | `NCBI_EMAIL` | your email |
+
+5. (Optional) **Settings → Networking → Custom Domain** — enter your domain and follow the CNAME instructions. Railway provisions TLS automatically.
+6. Railway redeploys on every push to the default branch. The container runs `alembic upgrade head` before starting uvicorn, so migrations apply on each deploy.
+7. Verify: `https://<your-domain>/health` returns `{"status": "ok", ...}` and `/` serves the terminal UI.
+
+**Security note:** GenBit has no built-in auth — [Session Isolation](#session-isolation) is `localStorage`-based, so a public domain means anyone who finds the URL can use your NCBI quota and create projects. For private/personal deploys, put it behind Cloudflare Access, Tailscale, or basic-auth at a proxy before going live.
+
 ## Terminal Commands
 
 ### Lookup
